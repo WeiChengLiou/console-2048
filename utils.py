@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import numpy as np
+import pdb
 
 
 class State(object):
@@ -28,17 +29,14 @@ class StateAct(object):
             return self.score
 
 
+vfunc = np.vectorize(lambda x, y: np.log2(max(x, y)))
+
+
 def encState(state):
     """ encode original state into two boards """
-    s1 = np.zeros((1, 6, 7, 2), dtype=np.float32)
-    for i in xrange(42):
-        c = i % 7
-        r = (i - c) / 7
-        if state[i] == 1:
-            s1[0, r, c, 0] = 1
-        elif state[i] == 2:
-            s1[0, r, c, 1] = 1
-    return s1
+    s1 = np.array(state).astype(np.float)
+    s1 = vfunc(s1, 1)
+    return s1.reshape((1, 4, 4, 1))
 
 
 def chkEmpty(s1, i):

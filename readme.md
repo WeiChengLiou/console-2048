@@ -11,7 +11,9 @@ Ex:
 
 Parameter:
 
+-n: number of games
 --cols: (default: 4)
 --rows: (default: 4)
---algo: (default: manual)
+--algo: manual, random. (default: manual)
+--noshow: NOT display game process
 

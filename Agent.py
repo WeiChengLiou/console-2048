@@ -7,7 +7,7 @@ import tensorflow as tf
 import numpy as np
 from pdb import set_trace
 from random import random, randint
-from utils import chkEmpty, StateAct
+from utils import chkEmpty, StateAct, encState
 import savedata
 
 
@@ -16,9 +16,6 @@ import savedata
 # Need to define reward, loss, training process
 # Unlike usual NN, the training and test process do at the same time.
 # When we try to predict an action, we update our network when new state/reward arrives.
-# Question:
-#   1. Can we initialize multiple tf.Session() at the same time?
-#      Ans: Seems yes
 SEED = 34654
 N_BATCH = 10
 N_REPSIZE = 200
@@ -64,8 +61,8 @@ class Random(Model):
 
 
 class NNQ(Model):
-    def __init__(self, sgn, algo, alpha=0.5, gamma=0.5, epsilon=0.1, **kwargs):
-        self.sgn = sgn
+    def __init__(self, alpha=0.5, gamma=0.5, epsilon=0.1, **kwargs):
+        algo = 'ANN'
         self.SARs = []  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
         self.gamma = kwargs.get('gamma', 0.5)  # Discount factor
@@ -75,7 +72,7 @@ class NNQ(Model):
         self.algo = algo
         self.RepSize = N_REPSIZE
 
-        self.Q = tf.placeholder(tf.float32, shape=[N_BATCH, self.ncol])
+        self.Q = tf.placeholder(tf.float32, shape=[N_BATCH, 4])
         eval(algo)(self)  # Build up NN structure
 
         f = lambda x: tf.nn.l2_loss(self.__getattribute__(x))
@@ -106,6 +103,7 @@ class NNQ(Model):
             self.SARs = self.SARs[N_BATCH:]
 
     def update(self, state, r0):
+        state = encState(state)
         # receive state class
         if self.SARs and (not self.nolearn):
             s0 = self.SARs[-1]
@@ -142,12 +140,12 @@ class NNQ(Model):
             set_trace()
 
     def predict(self, state):
+        state = encState(state)
         """ epsilon-greedy algorithm """
         if random() > self.epsilon:
-            act = self._action(state)
+            return self._action(state)
         else:
-            act = rndAction(state)
-        return act
+            return rndAction(state)
 
     def _action(self, state):
         """
@@ -223,49 +221,36 @@ class NNQ(Model):
         """ TODO """
 
 
-def ANN1(self):
-    self.new_shape = (N_BATCH, 84)
+def ANN(self):
+    self.new_shape = (N_BATCH, 4, 4, 1)
     self.state = tf.placeholder(tf.float32, shape=self.new_shape)
+    self.newstate = tf.reshape(self.state, [N_BATCH, 4, 4])
     self.fc1_weights = tf.Variable(
-        tf.truncated_normal([84, 7], stddev=0.1, seed=SEED)
+        tf.truncated_normal([4, 4, 16], stddev=0.1, seed=SEED)
         )
     self.fc1_biases = tf.Variable(
-        tf.zeros([N_BATCH, 7]))
-    self.parms = ('fc1_weights', 'fc1_biases')
-
-    model = tf.nn.softmax(
-        tf.matmul(self.state, self.fc1_weights) + self.fc1_biases)
-    self.model = model
-
-
-def ANN2(self):
-    self.new_shape = (N_BATCH, 84)
-    self.state = tf.placeholder(tf.float32, shape=self.new_shape)
-    self.fc1_weights = tf.Variable(
-        tf.truncated_normal([84, 16], stddev=0.1, seed=SEED)
-        )
-    self.fc1_biases = tf.Variable(
-        tf.zeros([N_BATCH, 16]))
+        tf.zeros([N_BATCH, 4, 4, 16]))
     self.fc2_weights = tf.Variable(
-        tf.truncated_normal([16, 7], stddev=0.1, seed=SEED)
+        tf.truncated_normal([256, 4], stddev=0.1, seed=SEED)
         )
     self.fc2_biases = tf.Variable(
-        tf.zeros([N_BATCH, 7]))
+        tf.zeros([N_BATCH, 4]))
     self.parms = ('fc1_weights', 'fc1_biases', 'fc2_weights', 'fc2_biases')
 
     model = tf.nn.relu(
-        tf.matmul(self.state, self.fc1_weights) + self.fc1_biases)
+        tf.matmul(self.newstate, self.fc1_weights) + self.fc1_biases)
+    model = tf.reshape(model, [N_BATCH, 4 * 4 * 16])
     self.model = tf.nn.softmax(
         tf.matmul(model, self.fc2_weights) + self.fc2_biases)
 
 
 def CNN(self):
-    self.zeros = lambda x: np.zeros((x, 6, 7, 2))
-    self.new_shape = (N_BATCH, 6, 7, 2)
+    self.zeros = lambda x: np.zeros((x, 4, 4, 1))
+    self.new_shape = (N_BATCH, 4, 4, 1)
     self.state = tf.placeholder(tf.float32, shape=self.new_shape)
 
     self.conv1_weights = tf.Variable(
-        tf.truncated_normal([3, 3, 2, 16], stddev=0.1, seed=SEED)
+        tf.truncated_normal([2, 2, 1, 16], stddev=0.1, seed=SEED)
         )
     self.conv1_biases = tf.Variable(
         tf.zeros([16]))

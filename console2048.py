@@ -209,13 +209,17 @@ class Game:
             functools.partial(push_all_columns, up=True),
             functools.partial(push_all_columns, up=False)]
         self.score = 0
+        self.turns = 0
         self.end = False
-        self.agent = initAgent(kwargs.get('agent').lower())
+        self.agent = kwargs['agent']
 
     def move(self, direction):
+        self.turns += 1
         grid_copy = copy.deepcopy(self.grid)
         self.reward = self.moves[direction](self.grid)
         self.grid0 = grid_copy
+
+        self.agent.update(self.grid, self.reward)
 
         if self.grid == grid_copy:
             return 0
@@ -226,26 +230,19 @@ class Game:
         self.end = True
         return 0
 
-    def display(self):
+    def display(self, noshow=True):
+        if noshow:
+            return
         print_grid(self.grid, self.score)
 
     def action(self):
         return keypad[self.agent.predict(self.grid)]
 
-    def reward(self, grid):
-        nset = getNset(self.grid0)
-        nset1 = getNset(grid)
-        if nset1[0] < nset[0]:
-            return 0
-        else:
-            r = 0
-            print(nset)
-            print(nset1)
-            for i in xrange(len(NUMSET)-1, 1, -1):
-                if nset1[i] > nset[i]:
-                    r += max(0, nset1[i] - nset[i]) * NUMSET[i]
-                    nset1[i-1] += 2
-            return r
+    def update(self):
+        self.agent.update(self.grid, self.reward)
+
+    def reset(self):
+        self.agent.reset()
 
 
 def initAgent(agent):
@@ -264,32 +261,47 @@ def main(**kwargs):
     Update game state.
     Display updates to user.
     """
-    game = Game(**kwargs)
-    game.display()
-    while True:
-        # get_input = getch("Enter direction (w/a/s/d): ")
-        get_input = game.action()
-        if get_input in keypad:
-            game.move(keypad.index(get_input))
-        elif get_input == "q":
-            break
-        else:
-            print("\nInvalid choice.")
-            continue
-        if game.end:
-            game.display()
-            print("You Lose!")
-            break
-        game.display()
+    agent = initAgent(kwargs['agent'].lower())
+    kwargs['agent'] = agent
+
+    def mainsub(*args):
+        game = Game(**kwargs)
+        game.display(kwargs['noshow'])
+        while True:
+            # get_input = getch("Enter direction (w/a/s/d): ")
+            get_input = game.action()
+            if get_input in keypad:
+                game.move(keypad.index(get_input))
+                game.update()
+            # elif get_input == "q":
+            #     break
+            # else:
+            #     print("\nInvalid choice.")
+            #     continue
+            if game.end:
+                game.display(kwargs['noshow'])
+                print("You Lose!", game.turns, game.score)
+                break
+            game.display(kwargs['noshow'])
+        game.reset()
+
+    map(mainsub, range(kwargs['n']))
     print("Thanks for playing.")
 
 
-if __name__ == "__main__":
+def getargs():
     import argparse
     parser = argparse.ArgumentParser()
+    parser.add_argument('-n', default=1, type=int, help='agent')
     parser.add_argument('--cols', default=4)
     parser.add_argument('--rows', default=4)
     parser.add_argument('--agent', default='manual', help='agent')
+    parser.add_argument('--noshow', default=0, help='no display game process')
+    return parser
+
+
+if __name__ == "__main__":
+    parser = getargs()
     args = parser.parse_args()
     args = vars(args)
     main(**args)
