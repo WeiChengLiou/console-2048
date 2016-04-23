@@ -1,10 +1,18 @@
 from __future__ import print_function
 
+import itertools as it
 import os
 import sys
 import copy
 import random
 import functools
+from Agent import Model, Random, NNQ
+from pdb import set_trace
+from math import pow
+keypad = "adws"
+NUMSET = [pow(2, i) for i in range(12)]
+NUMSET[0] = 0
+
 
 #Python 2/3 compatibility.
 if sys.version_info[0] == 2:
@@ -57,15 +65,29 @@ else:
     getch = _getch_linux
 
 
+class Manual(Model):
+    # Manual Player
+    def predict(self, state):
+        return keypad.index(getch("Enter direction (w/a/s/d): "))
+
+    def update(self, s1, r):
+        return self
+
+    def reset(self):
+        """"""
+
+
 def push_row(row, left=True):
     """Push all tiles in one row; like tiles will be merged together."""
+    r = 0
     row = row[:] if left else row[::-1]
     new_row = [item for item in row if item]
     for i in range(len(new_row)-1):
         if new_row[i] and new_row[i] == new_row[i+1]:
+            r += new_row[i] * 2
             new_row[i], new_row[i+1:] = new_row[i]*2, new_row[i+2:]+[0]
     new_row += [0]*(len(row)-len(new_row))
-    return new_row if left else new_row[::-1]
+    return (new_row if left else new_row[::-1]), r
 
 
 def get_column(grid, column_index):
@@ -88,8 +110,11 @@ def push_all_rows(grid, left=True):
     Pass left=True for left and left=False for right.
     The grid will be changed inplace.
     """
+    r = 0
     for i,row in enumerate(grid):
-        grid[i] = push_row(row, left)
+        grid[i], r_ = push_row(row, left)
+        r += r_
+    return r
 
 
 def push_all_columns(grid, up=True):
@@ -98,10 +123,13 @@ def push_all_columns(grid, up=True):
     Pass up=True for up and up=False for down.
     The grid will be changed inplace.
     """
+    r = 0
     for i,val in enumerate(grid[0]):
         column = get_column(grid, i)
-        new = push_row(column, up)
+        new, r_ = push_row(column, up)
+        r += r_
         set_column(grid, i, new)
+    return r
 
 
 def get_empty_cells(grid):
@@ -149,9 +177,10 @@ def prepare_next_turn(grid):
     return any_possible_moves(grid)
 
 
-def print_grid(grid):
+def print_grid(grid, score):
     """Print a pretty grid to the screen."""
     print("")
+    print(score)
     wall = "+------"*len(grid[0])+"+"
     print(wall)
     for row in grid:
@@ -159,49 +188,86 @@ def print_grid(grid):
         print("|{}|".format(meat))
         print(wall)
 
-def score_grid(grid):
-    return max([i for row in grid for i in row])
+
+def getNset(grid):
+    ret = [0] * len(NUMSET)
+
+    def inc(x):
+        i = NUMSET.index(x)
+        ret[i] += 1
+
+    map(inc, it.chain(*grid))
+    return ret
+
 
 class Game:
-    def __init__(self, cols=4, rows=4):
+    def __init__(self, cols=4, rows=4, **kwargs):
         self.grid = get_start_grid(cols, rows)
-        self.moves = [functools.partial(push_all_rows, left=True),
-                      functools.partial(push_all_rows, left=False),
-                      functools.partial(push_all_columns, up=True),
-                      functools.partial(push_all_columns, up=False)]
-        self.score = score_grid(self.grid)
+        self.moves = [
+            functools.partial(push_all_rows, left=True),
+            functools.partial(push_all_rows, left=False),
+            functools.partial(push_all_columns, up=True),
+            functools.partial(push_all_columns, up=False)]
+        self.score = 0
         self.end = False
+        self.agent = initAgent(kwargs.get('agent'))
 
     def move(self, direction):
         grid_copy = copy.deepcopy(self.grid)
-        self.moves[direction](self.grid)
+        self.reward = self.moves[direction](self.grid)
+        self.grid0 = grid_copy
 
         if self.grid == grid_copy:
             return 0
         if prepare_next_turn(self.grid):
-            score = score_grid(self.grid)
-            reward = score - self.score
-            self.score = score
-            return reward
+            self.score += self.reward
+            return self.reward
 
         self.end = True
         return 0
 
     def display(self):
-        print_grid(self.grid)
+        print_grid(self.grid, self.score)
+
+    def action(self):
+        return keypad[self.agent.predict(self.grid)]
+
+    def reward(self, grid):
+        nset = getNset(self.grid0)
+        nset1 = getNset(grid)
+        if nset1[0] < nset[0]:
+            return 0
+        else:
+            r = 0
+            print(nset)
+            print(nset1)
+            for i in xrange(len(NUMSET)-1, 1, -1):
+                if nset1[i] > nset[i]:
+                    r += max(0, nset1[i] - nset[i]) * NUMSET[i]
+                    nset1[i-1] += 2
+            return r
 
 
-def main():
+def initAgent(agent):
+    if agent == 'random':
+        return Random()
+    elif agent == 'neural':
+        return NNQ()
+    else:
+        return Manual()
+
+
+def main(**kwargs):
     """
     Get user input.
     Update game state.
     Display updates to user.
     """
-    keypad = "adws"
-    game = Game(*map(int,sys.argv[1:]))
+    game = Game(**kwargs)
     game.display()
     while True:
-        get_input = getch("Enter direction (w/a/s/d): ")
+        # get_input = getch("Enter direction (w/a/s/d): ")
+        get_input = game.action()
         if get_input in keypad:
             game.move(keypad.index(get_input))
         elif get_input == "q":
@@ -218,4 +284,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--cols', default=4)
+    parser.add_argument('--rows', default=4)
+    parser.add_argument('--agent', default='manual', help='agent')
+    args = parser.parse_args()
+    args = vars(args)
+    main(**args)

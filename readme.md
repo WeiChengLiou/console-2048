@@ -7,6 +7,11 @@ The result of an afternoon messing around.
 Defaults to 4x4.  Different grid sizes can be played by passing the width and height as command line arguments.
 
 Ex:
-python console2048.py 3 3
+./console2048.py
 
--Mek
+Parameter:
+
+--cols: (default: 4)
+--rows: (default: 4)
+--algo: (default: manual)
+
