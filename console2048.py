@@ -210,7 +210,7 @@ class Game:
             functools.partial(push_all_columns, up=False)]
         self.score = 0
         self.end = False
-        self.agent = initAgent(kwargs.get('agent'))
+        self.agent = initAgent(kwargs.get('agent').lower())
 
     def move(self, direction):
         grid_copy = copy.deepcopy(self.grid)
@@ -249,6 +249,7 @@ class Game:
 
 
 def initAgent(agent):
+    print(agent)
     if agent == 'random':
         return Random()
     elif agent == 'neural':
