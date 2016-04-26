@@ -209,12 +209,12 @@ class Game:
             functools.partial(push_all_columns, up=True),
             functools.partial(push_all_columns, up=False)]
         self.score = 0
-        self.turns = 0
+        self.nturn = 0
         self.end = False
         self.agent = kwargs['agent']
 
     def move(self, direction):
-        self.turns += 1
+        self.nturn += 1
         grid_copy = copy.deepcopy(self.grid)
         self.reward = self.moves[direction](self.grid)
         self.grid0 = grid_copy
@@ -263,6 +263,7 @@ def main(**kwargs):
     """
     agent = initAgent(kwargs['agent'].lower())
     kwargs['agent'] = agent
+    result = []
 
     def mainsub(*args):
         game = Game(**kwargs)
@@ -280,9 +281,10 @@ def main(**kwargs):
             #     continue
             if game.end:
                 game.display(kwargs['noshow'])
-                print("You Lose!", game.turns, game.score)
+                print("Result:", game.nturn, game.score)
                 break
             game.display(kwargs['noshow'])
+            result.append((game.score, game.nturn))
         game.reset()
 
     map(mainsub, range(kwargs['n']))
@@ -292,11 +294,12 @@ def main(**kwargs):
 def getargs():
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('-n', default=1, type=int, help='agent')
+    parser.add_argument('-n', default=1, type=int, help='number of games')
     parser.add_argument('--cols', default=4)
     parser.add_argument('--rows', default=4)
     parser.add_argument('--agent', default='manual', help='agent')
     parser.add_argument('--noshow', default=0, help='no display game process')
+    parser.add_argument('--train', default=0, help='train mode')
     return parser
 
 
@@ -304,4 +307,5 @@ if __name__ == "__main__":
     parser = getargs()
     args = parser.parse_args()
     args = vars(args)
+    print(args)
     main(**args)
