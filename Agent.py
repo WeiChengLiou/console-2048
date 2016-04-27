@@ -63,6 +63,7 @@ class Random(Model):
 class NNQ(Model):
     def __init__(self, alpha=0.5, gamma=0.5, epsilon=0.1, **kwargs):
         algo = 'ANN'
+        print('Use %s' % algo)
         self.SARs = []  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
         self.gamma = kwargs.get('gamma', 0.5)  # Discount factor
@@ -83,6 +84,7 @@ class NNQ(Model):
         self.optimizer = \
             tf.train.GradientDescentOptimizer(0.5)\
               .minimize(self.loss)
+        self.saver = tf.train.Saver([self.fc1_weights])
 
         # Before starting, initialize the variables.  We will 'run' this first.
         self.init = tf.initialize_all_variables()
@@ -115,8 +117,16 @@ class NNQ(Model):
                 self._update([s0])
         return self
 
-    def booking(self, SA):
-        self.SARs.append(SA)
+    def booking(self, state, act):
+        if self.SARs:
+            num0 = hash(tuple(state.ravel()))
+            num1 = hash(tuple(self.SARs[-1].state.ravel()))
+            if num0 == num1:
+                s0 = self.SARs[-1]
+                s0.act = act
+                return
+        s0 = StateAct(state, act, None)
+        self.SARs.append(s0)
 
     def _update(self, SARs):
         try:
@@ -145,9 +155,11 @@ class NNQ(Model):
         state = encState(state)
         """ epsilon-greedy algorithm """
         if random() > self.epsilon:
-            return self._action(state)
+            act = self._action(state)
         else:
-            return rndAction(state)
+            act = rndAction(state)
+        self.booking(state, act)
+        return act
 
     def _action(self, state):
         """
@@ -162,7 +174,6 @@ class NNQ(Model):
                 act = i
                 break
             assert act != -1
-            self.booking(StateAct(state, act, None))
             return act
         except:
             print_exc()
@@ -182,6 +193,7 @@ class NNQ(Model):
         if self.nolearn:
             return
         self.saveobj.save(self.parms, self.getparm())
+        self.saver.save(self.sess, 'tmp/%s.ckpt' % self.algo)
 
     def reward(self, a, r):
         """
@@ -218,8 +230,9 @@ class NNQ(Model):
             li.append(self.sess.run(parm))
         return li
 
-    def load(self):
-        """ TODO """
+    def loadNN(self):
+        fi = 'tmp/%s.ckpt' % self.algo
+        self.saver.restore(self.sess, fi)
 
 
 def ANN(N_BATCH):
@@ -228,15 +241,21 @@ def ANN(N_BATCH):
     state = tf.placeholder(tf.float32, shape=new_shape)
     newstate = tf.reshape(state, [N_BATCH, 4 * 4])
     fc1_weights = tf.Variable(
-        tf.truncated_normal([16, 32], stddev=0.1, seed=SEED)
+        tf.truncated_normal([16, 32], stddev=0.1, seed=SEED),
+        trainable=True,
         )
     fc1_biases = tf.Variable(
-        tf.zeros([32]))
+        tf.zeros([32]),
+        trainable=True,
+        )
     fc2_weights = tf.Variable(
-        tf.truncated_normal([32, 4], stddev=0.1, seed=SEED)
+        tf.truncated_normal([32, 4], stddev=0.1, seed=SEED),
+        trainable=True,
         )
     fc2_biases = tf.Variable(
-        tf.zeros([4]))
+        tf.zeros([4]),
+        trainable=True,
+        )
     parms = ('fc1_weights', 'fc1_biases', 'fc2_weights', 'fc2_biases')
 
     model = tf.nn.relu(
@@ -252,16 +271,21 @@ def CNN(N_BATCH):
     state = tf.placeholder(tf.float32, shape=new_shape)
 
     conv1_weights = tf.Variable(
-        tf.truncated_normal([2, 2, 1, 16], stddev=0.1, seed=SEED)
+        tf.truncated_normal([2, 2, 1, 16], stddev=0.1, seed=SEED),
+        trainable=True,
         )
     conv1_biases = tf.Variable(
-        tf.zeros([16]))
+        tf.zeros([16]),
+        trainable=True,
+        )
     fc1_weights = tf.Variable(
-        tf.truncated_normal([256, 4], stddev=0.1, seed=SEED)
-        # tf.ones([N, ncol])
+        tf.truncated_normal([256, 4], stddev=0.1, seed=SEED),
+        trainable=True,
         )
     fc1_biases = tf.Variable(
-        tf.zeros([4]))
+        tf.zeros([4]),
+        trainable=True,
+        )
     parms = ('conv1_weights', 'conv1_biases', 'fc1_weights', 'fc1_biases')
 
     conv = tf.nn.conv2d(

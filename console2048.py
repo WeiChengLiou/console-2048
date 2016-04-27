@@ -210,19 +210,20 @@ class Game:
             functools.partial(push_all_columns, up=False)]
         self.score = 0
         self.nturn = 0
+        self.reward = 0
         self.end = False
         self.agent = kwargs['agent']
 
     def move(self, direction):
-        self.nturn += 1
         grid_copy = copy.deepcopy(self.grid)
-        self.reward = self.moves[direction](self.grid)
-        self.grid0 = grid_copy
-
-        self.agent.update(self.grid, self.reward)
+        r = self.moves[direction](self.grid)
 
         if self.grid == grid_copy:
             return 0
+
+        self.nturn += 1
+        self.reward = r
+        self.grid0 = grid_copy
         if prepare_next_turn(self.grid):
             self.score += self.reward
             return self.reward
@@ -238,19 +239,21 @@ class Game:
     def action(self):
         return keypad[self.agent.predict(self.grid)]
 
-    def update(self):
-        self.agent.update(self.grid, self.reward)
+    def update(self, r):
+        self.reward = r
+        self.agent.update(self.grid, r)
 
     def reset(self):
         self.agent.reset()
 
 
-def initAgent(agent):
+def initAgent(**kwargs):
+    agent = kwargs['agent']
     print(agent)
     if agent == 'random':
         return Random()
     elif agent == 'neural':
-        return NNQ()
+        return NNQ(**kwargs)
     else:
         return Manual()
 
@@ -261,7 +264,7 @@ def main(**kwargs):
     Update game state.
     Display updates to user.
     """
-    agent = initAgent(kwargs['agent'].lower())
+    agent = initAgent(**kwargs)
     kwargs['agent'] = agent
     result = []
 
@@ -272,8 +275,8 @@ def main(**kwargs):
             # get_input = getch("Enter direction (w/a/s/d): ")
             get_input = game.action()
             if get_input in keypad:
-                game.move(keypad.index(get_input))
-                game.update()
+                r = game.move(keypad.index(get_input))
+                game.update(r)
             # elif get_input == "q":
             #     break
             # else:
@@ -284,10 +287,17 @@ def main(**kwargs):
                 print("Result:", game.nturn, game.score)
                 break
             game.display(kwargs['noshow'])
-            result.append((game.score, game.nturn))
+        result.append((game.score, game.nturn))
+        game.agent.replay()
         game.reset()
 
     map(mainsub, range(kwargs['n']))
+    if kwargs['train']:
+        agent.saveNN()
+        with open('result.txt', 'wb') as f:
+            for ln in result:
+                print(ln)
+                f.write('%d %d\n' % ln)
     print("Thanks for playing.")
 
 
@@ -307,5 +317,6 @@ if __name__ == "__main__":
     parser = getargs()
     args = parser.parse_args()
     args = vars(args)
+    args['agent'] = args['agent'].lower()
     print(args)
     main(**args)

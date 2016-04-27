@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 from unittest import TestCase
-from Agent import NNQ, ANN2, CNN
+from Agent import NNQ, ANN, CNN
 import tensorflow as tf
 from utils import encState
 
@@ -12,8 +12,15 @@ class testobj(TestCase):
 
     def testtf(self):
         N_BATCH = 1
-        ANN2(N_BATCH)
+        ANN(N_BATCH)
         CNN(N_BATCH)
+
+    def chkeq(self, mat1, mat2):
+        cnt, N = 0, mat1.shape[0]
+        for i in range(N):
+            cnt += int(all([(x1 == x2) for x1, x2 in
+                       zip(mat1[i, :], mat2[i, :])]))
+        return cnt == N
 
     def testpredict(self):
         state0 = [
@@ -24,7 +31,15 @@ class testobj(TestCase):
             ]
         # state0 = encState(state0)
         obj = NNQ()
+
+        mat, = obj.sess.run([obj.fc1_weights])
+        obj.saveNN()
         print obj.predict(state0)
 
         obj.update(state0, 10.)
+        mat1, = obj.sess.run([obj.fc1_weights])
+        self.assertFalse(self.chkeq(mat, mat1))
 
+        obj.loadNN()
+        mat1, = obj.sess.run([obj.fc1_weights])
+        self.assertTrue(self.chkeq(mat, mat1))

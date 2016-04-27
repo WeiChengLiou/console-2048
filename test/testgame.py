@@ -12,7 +12,8 @@ class testobj(TestCase):
             'cols': 4,
             'rows': 4,
             'n': 1,
-            'noshow': 0
+            'noshow': 0,
+            'train': 0,
             }
 
     def _testinit(self):
