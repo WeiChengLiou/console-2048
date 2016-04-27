@@ -76,15 +76,15 @@ class NNQ(Model):
         self.Q = tf.placeholder(tf.float32, shape=[N_BATCH, 4])
         dic = eval(algo)(N_BATCH)  # Build up NN structure
         self.__dict__.update(dic)
+        self.parms = tf.trainable_variables()
 
-        f = lambda x: tf.nn.l2_loss(self.__getattribute__(x))
         loss = tf.reduce_mean(tf.square(self.model - self.Q))
-        regularizer = sum(map(f, self.parms))
-        self.loss = loss #+ 1e-4 * regularizer
+        # regularizer = sum(map(tf.nn.l2_loss, self.parms))
+        self.loss = loss  # + 1e-4 * regularizer
         self.optimizer = \
             tf.train.GradientDescentOptimizer(0.5)\
               .minimize(self.loss)
-        self.saver = tf.train.Saver([self.fc1_weights])
+        self.saver = tf.train.Saver(self.parms)
 
         # Before starting, initialize the variables.  We will 'run' this first.
         self.init = tf.initialize_all_variables()
@@ -96,8 +96,7 @@ class NNQ(Model):
         if not self.nolearn:
             self.saveobj = savedata.SaveObj(
                 self.algo + '.h5',
-                [(p, self.__getattribute__(p).get_shape().as_list())
-                    for p in self.parms],
+                [(p.name, p.get_shape().as_list()) for p in self.parms],
                 times=self.nRun,
                 )
 
@@ -192,7 +191,7 @@ class NNQ(Model):
     def saveNN(self):
         if self.nolearn:
             return
-        self.saveobj.save(self.parms, self.getparm())
+        self.saveobj.save(self.getparm())
         self.saver.save(self.sess, 'tmp/%s.ckpt' % self.algo)
 
     def reward(self, a, r):
@@ -225,10 +224,7 @@ class NNQ(Model):
             set_trace()
 
     def getparm(self):
-        li = []
-        for parm in it.imap(self.__getattribute__, self.parms):
-            li.append(self.sess.run(parm))
-        return li
+        return self.sess.run(self.parm)
 
     def loadNN(self):
         fi = 'tmp/%s.ckpt' % self.algo
@@ -243,21 +239,23 @@ def ANN(N_BATCH):
     fc1_weights = tf.Variable(
         tf.truncated_normal([16, 32], stddev=0.1, seed=SEED),
         trainable=True,
+        name='fc1_weights',
         )
     fc1_biases = tf.Variable(
         tf.zeros([32]),
         trainable=True,
+        name='fc1_biases',
         )
     fc2_weights = tf.Variable(
         tf.truncated_normal([32, 4], stddev=0.1, seed=SEED),
         trainable=True,
+        name='fc2_weights',
         )
     fc2_biases = tf.Variable(
         tf.zeros([4]),
         trainable=True,
+        name='fc2_biases',
         )
-    parms = ('fc1_weights', 'fc1_biases', 'fc2_weights', 'fc2_biases')
-
     model = tf.nn.relu(
         tf.matmul(newstate, fc1_weights) + fc1_biases)
     model = tf.nn.softmax(
@@ -273,20 +271,23 @@ def CNN(N_BATCH):
     conv1_weights = tf.Variable(
         tf.truncated_normal([2, 2, 1, 16], stddev=0.1, seed=SEED),
         trainable=True,
+        name='conv1_weights',
         )
     conv1_biases = tf.Variable(
         tf.zeros([16]),
         trainable=True,
+        name='conv1_biases',
         )
     fc1_weights = tf.Variable(
         tf.truncated_normal([256, 4], stddev=0.1, seed=SEED),
         trainable=True,
+        name='fc1_weights',
         )
     fc1_biases = tf.Variable(
         tf.zeros([4]),
         trainable=True,
+        name='fc1_biases',
         )
-    parms = ('conv1_weights', 'conv1_biases', 'fc1_weights', 'fc1_biases')
 
     conv = tf.nn.conv2d(
         state,
