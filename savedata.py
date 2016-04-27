@@ -38,8 +38,8 @@ class SaveObj(object):
         self.f = f
         self.dic = dic
 
-    def save(self, pname, pmat):
-        for name, mat in zip(pname, pmat):
+    def save(self, pdic):
+        for name, mat in pdic:
             dset = self.dic[name]
             dset[self.t, ...] = mat
         self.t = min(self.t + 1, self.maxt)

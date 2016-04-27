@@ -191,7 +191,7 @@ class NNQ(Model):
     def saveNN(self):
         if self.nolearn:
             return
-        self.saveobj.save(self.getparm())
+        self.saveobj.save(**self.getparm())
         self.saver.save(self.sess, 'tmp/%s.ckpt' % self.algo)
 
     def reward(self, a, r):
@@ -224,7 +224,8 @@ class NNQ(Model):
             set_trace()
 
     def getparm(self):
-        return self.sess.run(self.parm)
+        return [(p.name, val) for p, val in
+                zip(self.parms, self.sess.run(self.parm))]
 
     def loadNN(self):
         fi = 'tmp/%s.ckpt' % self.algo
