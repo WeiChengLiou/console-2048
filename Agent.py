@@ -62,14 +62,14 @@ class Random(Model):
 
 class NNQ(Model):
     def __init__(self, alpha=0.5, gamma=0.5, epsilon=0.1, **kwargs):
-        algo = 'ANN'
+        algo = 'CNN'
         print('Use %s' % algo)
         self.SARs = []  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
         self.gamma = kwargs.get('gamma', 0.5)  # Discount factor
         self.epsilon = kwargs.get('epsilon', 0.1)
-        self.nRun = kwargs.get('nRun', 100)
-        self.nolearn = kwargs.get('nolearn', False)
+        self.nRun = kwargs.get('n', 100)
+        self.nolearn = not kwargs.get('train', True)
         self.algo = algo
         self.RepSize = N_REPSIZE
 
@@ -188,10 +188,10 @@ class NNQ(Model):
         SARs = [self.SARs[i] for i in idx]
         self._update(SARs)
 
-    def saveNN(self):
+    def save(self):
         if self.nolearn:
             return
-        self.saveobj.save(**self.getparm())
+        self.saveobj.save(self.getparm())
         self.saver.save(self.sess, 'tmp/%s.ckpt' % self.algo)
 
     def reward(self, a, r):
@@ -225,9 +225,9 @@ class NNQ(Model):
 
     def getparm(self):
         return [(p.name, val) for p, val in
-                zip(self.parms, self.sess.run(self.parm))]
+                zip(self.parms, self.sess.run(self.parms))]
 
-    def loadNN(self):
+    def load(self):
         fi = 'tmp/%s.ckpt' % self.algo
         self.saver.restore(self.sess, fi)
 

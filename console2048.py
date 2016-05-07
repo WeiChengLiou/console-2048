@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import numpy as np
 import itertools as it
 import os
 import sys
@@ -289,15 +290,13 @@ def main(**kwargs):
             game.display(kwargs['noshow'])
         result.append((game.score, game.nturn))
         game.agent.replay()
+        if kwargs['train']:
+            game.agent.save()
         game.reset()
+        if kwargs['train']:
+            np.save('result.%s' % game.agent.algo, np.array(result))
 
     map(mainsub, range(kwargs['n']))
-    if kwargs['train']:
-        agent.saveNN()
-        with open('result.txt', 'wb') as f:
-            for ln in result:
-                print(ln)
-                f.write('%d %d\n' % ln)
     print("Thanks for playing.")
 
 
@@ -310,6 +309,7 @@ def getargs():
     parser.add_argument('--agent', default='manual', help='agent')
     parser.add_argument('--noshow', default=0, help='no display game process')
     parser.add_argument('--train', default=0, help='train mode')
+    parser.add_argument('--ckpt', default='', help='check point')
     return parser
 
 
