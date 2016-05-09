@@ -62,7 +62,7 @@ class Random(Model):
 
 class NNQ(Model):
     def __init__(self, alpha=0.5, gamma=0.5, epsilon=0.1, **kwargs):
-        algo = 'CNN'
+        algo = 'CNN2'
         print('Use %s' % algo)
         self.SARs = []  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
@@ -306,76 +306,50 @@ def CNN(N_BATCH):
     return locals()
 
 
-def CNN2(self):
-    self.zeros = lambda x: np.zeros((x, 6, 7, 2))
-    self.new_shape = (N_BATCH, 6, 7, 2)
-    self.state = tf.placeholder(tf.float32, shape=self.new_shape)
+def CNN2(N_BATCH):
+    zeros = lambda x: np.zeros((x, 4, 4, 1))
+    new_shape = (N_BATCH, 4, 4, 1)
+    state = tf.placeholder(tf.float32, shape=new_shape)
 
-    self.conv1_weights = tf.Variable(
-        tf.truncated_normal([3, 3, 2, 16], stddev=0.1, seed=SEED)
+    conv1_weights = tf.Variable(
+        tf.truncated_normal([2, 2, 1, 16], stddev=0.1, seed=SEED),
+        trainable=True,
         )
-    self.conv1_biases = tf.Variable(
-        tf.zeros([16]))
-    self.fc1_weights = tf.Variable(
-        tf.truncated_normal([672, 7], stddev=0.1, seed=SEED)
+    conv1_biases = tf.Variable(
+        tf.zeros([16]),
+        trainable=True,
         )
-    self.fc1_biases = tf.Variable(
-        tf.zeros([7]))
-    self.parms = ('conv1_weights', 'conv1_biases', 'fc1_weights', 'fc1_biases')
-
-    conv = tf.nn.conv2d(
-        self.state,
-        self.conv1_weights,
-        strides=[1, 1, 1, 1],
-        padding='SAME')
-    relu = tf.nn.relu(tf.nn.bias_add(conv, self.conv1_biases))
-    pool = tf.nn.max_pool(
-        relu,
-        ksize=[1, 2, 2, 1],
-        strides=[1, 1, 1, 1],
-        padding='SAME')
-    pool_shape = pool.get_shape().as_list()
-    reshape = tf.reshape(
-        pool,
-        [pool_shape[0], pool_shape[1] * pool_shape[2] * pool_shape[3]]
+    conv2_weights = tf.Variable(
+        tf.truncated_normal([2, 2, 16, 32], stddev=0.1, seed=SEED),
+        trainable=True,
         )
-
-    self.model = tf.nn.softmax(
-        tf.matmul(reshape, self.fc1_weights) + self.fc1_biases)
-
-
-def CNN3(self):
-    self.new_shape = (1, 6, 7, 1)
-    self.state = tf.placeholder(tf.float32, shape=self.new_shape)
-
-    self.conv1_weights = tf.Variable(
-        tf.truncated_normal([4, 4, 1, 32], stddev=0.1, seed=SEED)
+    conv2_biases = tf.Variable(
+        tf.zeros([32]),
+        trainable=True,
         )
-    self.conv1_biases = tf.Variable(
-        tf.zeros([32]))
-    self.conv2_weights = tf.Variable(
-        tf.truncated_normal([3, 4, 32, 64], stddev=0.1, seed=SEED)
+    fc1_weights = tf.Variable(
+        tf.truncated_normal([32, 64], stddev=0.1, seed=SEED),
+        trainable=True,
         )
-    self.conv2_biases = tf.Variable(
-        tf.zeros([64]))
-    self.fc1_weights = tf.Variable(
-        tf.truncated_normal([256, 512], stddev=0.1, seed=SEED)
+    fc1_biases = tf.Variable(
+        tf.zeros([64]),
+        trainable=True,
         )
-    self.fc1_biases = tf.Variable(
-        tf.zeros([512]))
-    self.fc2_weights = tf.Variable(
-        tf.truncated_normal([512, 7], stddev=0.1, seed=SEED)
+    fc2_weights = tf.Variable(
+        tf.truncated_normal([64, 4], stddev=0.1, seed=SEED),
+        trainable=True,
         )
-    self.fc2_biases = tf.Variable(
-        tf.zeros([7]))
-    self.parms = ('conv1_weights', 'conv1_biases', 'conv2_weights', 'conv2_biases', 'fc1_weights', 'fc1_biases', 'fc2_weights', 'fc2_biases')
+    fc2_biases = tf.Variable(
+        tf.zeros([4]),
+        trainable=True,
+        )
 
     conv = tf.nn.conv2d(
-        self.state,
-        self.conv1_weights,
+        state,
+        conv1_weights,
         strides=[1, 1, 1, 1],
         padding='SAME')
-    relu = tf.nn.relu(tf.nn.bias_add(conv, self.conv1_biases))
+    relu = tf.nn.relu(tf.nn.bias_add(conv, conv1_biases))
     pool = tf.nn.max_pool(
         relu,
         ksize=[1, 2, 2, 1],
@@ -383,10 +357,10 @@ def CNN3(self):
         padding='SAME')
     conv = tf.nn.conv2d(
         pool,
-        self.conv2_weights,
+        conv2_weights,
         strides=[1, 1, 1, 1],
         padding='SAME')
-    relu = tf.nn.relu(tf.nn.bias_add(conv, self.conv2_biases))
+    relu = tf.nn.relu(tf.nn.bias_add(conv, conv2_biases))
     pool = tf.nn.max_pool(
         relu,
         ksize=[1, 2, 2, 1],
@@ -397,10 +371,11 @@ def CNN3(self):
         pool,
         [pool_shape[0], pool_shape[1] * pool_shape[2] * pool_shape[3]]
         )
+    print reshape.get_shape().as_list()
     hidden = tf.nn.relu(
-        tf.matmul(reshape, self.fc1_weights) + self.fc1_biases)
+        tf.matmul(reshape, fc1_weights) + fc1_biases)
     model = tf.nn.softmax(
-        tf.matmul(hidden, self.fc2_weights) + self.fc2_biases)
-    self.model = model
+        tf.matmul(hidden, fc2_weights) + fc2_biases)
+    return locals()
 
 

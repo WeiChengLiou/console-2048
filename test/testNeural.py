@@ -33,13 +33,13 @@ class testobj(TestCase):
         obj = NNQ()
 
         mat, = obj.sess.run([obj.fc1_weights])
-        obj.saveNN()
+        obj.save()
         print obj.predict(state0)
 
         obj.update(state0, 10.)
         mat1, = obj.sess.run([obj.fc1_weights])
         self.assertFalse(self.chkeq(mat, mat1))
 
-        obj.loadNN()
+        obj.load()
         mat1, = obj.sess.run([obj.fc1_weights])
         self.assertTrue(self.chkeq(mat, mat1))
