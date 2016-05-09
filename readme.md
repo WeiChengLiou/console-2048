@@ -16,4 +16,5 @@ Parameter:
 --rows: (default: 4)
 --agent: manual, random, neural. (default: manual)
 --noshow: NOT display game process. (default: 0)
-
+--train: train mode
+--ckpt: load check point (not finished)
