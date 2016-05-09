@@ -7,7 +7,7 @@ import tensorflow as tf
 import numpy as np
 from pdb import set_trace
 from random import random, randint
-from utils import chkEmpty, StateAct, encState
+from utils import chkEmpty, StateAct, encState, encReward
 import savedata
 
 
@@ -112,7 +112,7 @@ class NNQ(Model):
             s0 = self.SARs[-1]
             if s0.state1 is None:
                 s0.state1 = state
-                s0.score = r0
+                s0.score = encReward(r0)
                 self._update([s0])
         return self
 
@@ -371,7 +371,6 @@ def CNN2(N_BATCH):
         pool,
         [pool_shape[0], pool_shape[1] * pool_shape[2] * pool_shape[3]]
         )
-    print reshape.get_shape().as_list()
     hidden = tf.nn.relu(
         tf.matmul(reshape, fc1_weights) + fc1_biases)
     model = tf.nn.softmax(

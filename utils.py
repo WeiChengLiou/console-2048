@@ -46,3 +46,5 @@ def chkEmpty(s1, i):
     return (s1[0, r, c, 0] == 0) and (s1[0, r, c, 1] == 0)
 
 
+def encReward(r):
+    return vfunc(r, 1)
