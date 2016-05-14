@@ -8,7 +8,8 @@ import sys
 import copy
 import random
 import functools
-from Agent import Model, Random, NNQ, N_BATCH
+import Agent
+from Agent import Model, Random, NNQ
 from math import pow
 keypad = "adws"
 NUMSET = [pow(2, i) for i in range(12)]
@@ -325,7 +326,8 @@ if __name__ == "__main__":
     print(args)
 
     if args.get('N_BATCH'):
-        N_BATCH = args['N_BATCH']
-        print(N_BATCH)
+        Agent.N_BATCH = args['N_BATCH']
+    if args.get('N_REPSIZE'):
+        Agent.N_BATCH = args['N_REPSIZE']
 
     main(**args)

@@ -184,7 +184,9 @@ class NNQ(Model):
             return
         N = len(self.SARs)
         if (N < N_BATCH) or (self.nolearn):
+            print N, 'no replay'
             return
+        print N, 'replay'
         idx = np.random.choice(range(N), N_BATCH)
         # idx = np.array(range(N_BATCH))
         SARs = [self.SARs[i] for i in idx]
