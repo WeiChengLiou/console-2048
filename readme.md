@@ -18,3 +18,11 @@ Parameter:
 --noshow: NOT display game process. (default: 0)
 --train: train mode
 --ckpt: load check point (not finished)
+--config: load config file
+
+Parameter for neural agent:
+
+algo: choose NN structure
+alpha: learning rate
+gamma: discount rate
+epsilon: probability to random step

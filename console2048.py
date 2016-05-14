@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import yaml
 import numpy as np
 import itertools as it
 import os
@@ -7,7 +8,7 @@ import sys
 import copy
 import random
 import functools
-from Agent import Model, Random, NNQ
+from Agent import Model, Random, NNQ, N_BATCH
 from math import pow
 keypad = "adws"
 NUMSET = [pow(2, i) for i in range(12)]
@@ -309,6 +310,7 @@ def getargs():
     parser.add_argument('--noshow', default=0, help='no display game process')
     parser.add_argument('--train', default=0, help='train mode')
     parser.add_argument('--ckpt', default='', help='check point')
+    parser.add_argument('--config', help='config file')
     return parser
 
 
@@ -316,6 +318,14 @@ if __name__ == "__main__":
     parser = getargs()
     args = parser.parse_args()
     args = vars(args)
+    if args['config']:
+        config = yaml.load(open(args['config'], 'rb'))
+        args.update(config)
     args['agent'] = args['agent'].lower()
     print(args)
+
+    if args.get('N_BATCH'):
+        N_BATCH = args['N_BATCH']
+        print(N_BATCH)
+
     main(**args)

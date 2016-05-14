@@ -61,8 +61,8 @@ class Random(Model):
 
 
 class NNQ(Model):
-    def __init__(self, alpha=0.5, gamma=0.5, epsilon=0.1, **kwargs):
-        algo = 'CNN2'
+    def __init__(self, **kwargs):
+        algo = kwargs.get('algo', 'ANN')
         print('Use %s' % algo)
         self.SARs = []  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
@@ -131,6 +131,12 @@ class NNQ(Model):
         self.SARs.append(s0)
 
     def _update(self, SARs):
+        """
+        Q-learning:
+            R(t+1) = a * R'(St, At) +
+                     (1-a) * (R(St, At) + g * max_a(R'(St1, a)))
+            https://en.wikipedia.org/wiki/Q-learning
+        """
         S = np.vstack([sa.state for sa in SARs])
         n1 = S.shape[0]
         S1 = np.vstack([sa.state1 for sa in SARs])
@@ -174,11 +180,10 @@ class NNQ(Model):
         return act
 
     def replay(self):
-        # R(t+1) = a * R'(St, At) + (1-a) * (R(St, At) + g * max_a(R'(St1, a)))
-        if not self.nolearn:
+        if self.nolearn:
             return
         N = len(self.SARs)
-        if (N < N_BATCH) or (not self.nolearn):
+        if (N < N_BATCH) or (self.nolearn):
             return
         idx = np.random.choice(range(N), N_BATCH)
         # idx = np.array(range(N_BATCH))
