@@ -8,14 +8,13 @@ import copy
 import random
 import functools
 from Agent import Model, Random, NNQ
-from pdb import set_trace
 from math import pow
 keypad = "adws"
 NUMSET = [pow(2, i) for i in range(12)]
 NUMSET[0] = 0
 
 
-#Python 2/3 compatibility.
+# Python 2/3 compatibility.
 if sys.version_info[0] == 2:
     range = xrange
     input = raw_input
