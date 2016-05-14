@@ -328,6 +328,6 @@ if __name__ == "__main__":
     if args.get('N_BATCH'):
         Agent.N_BATCH = args['N_BATCH']
     if args.get('N_REPSIZE'):
-        Agent.N_BATCH = args['N_REPSIZE']
+        Agent.N_REPSIZE = args['N_REPSIZE']
 
     main(**args)
