@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from datetime import datetime
 from traceback import print_exc
 import itertools as it
 import tensorflow as tf
@@ -17,8 +18,8 @@ import savedata
 # Unlike usual NN, the training and test process do at the same time.
 # When we try to predict an action, we update our network when new state/reward arrives.
 SEED = 34654
-N_BATCH = 10
-N_REPSIZE = 200
+N_BATCH = 100
+N_REPSIZE = 500
 
 
 def rndAction(state):
@@ -73,18 +74,17 @@ class NNQ(Model):
         self.algo = algo
         self.RepSize = N_REPSIZE
         self.score = 0
+        self.i0 = 0
 
         self.Q = tf.placeholder(tf.float32, shape=[N_BATCH, 4])
-        dic = eval(algo)(N_BATCH)  # Build up NN structure
-        self.__dict__.update(dic)
+        self.__dict__.update(
+            eval(algo)(N_BATCH)  # Build up NN structure
+            )
         self.parms = tf.trainable_variables()
+        self.acts = tf.placeholder(tf.int32, shape=[N_BATCH])
 
-        loss = tf.reduce_mean(tf.square(self.model - self.Q))
-        # regularizer = sum(map(tf.nn.l2_loss, self.parms))
-        self.loss = loss  # + 1e-4 * regularizer
-        self.optimizer = \
-            tf.train.GradientDescentOptimizer(0.5)\
-              .minimize(self.loss)
+        self.loss, self.optimizer = RL_LossFunc(
+            self.parms, self.model, self.acts, self.Q)
         self.saver = tf.train.Saver(self.parms)
 
         # Before starting, initialize the variables.  We will 'run' this first.
@@ -101,12 +101,6 @@ class NNQ(Model):
                 times=self.nRun,
                 )
 
-    def reset(self):
-        self.score = 0
-        assert self.SARs[-1].state1 is not None
-        if len(self.SARs) > self.RepSize:
-            self.SARs = self.SARs[N_BATCH:]
-
     def update(self, state, r0):
         score0, self.score = self.score, r0
         state = encState(state)
@@ -115,8 +109,8 @@ class NNQ(Model):
             s0 = self.SARs[-1]
             if s0.state1 is None:
                 s0.state1 = state
-                s0.score = encReward(r0) - encReward(score0)
-                self._update([s0])
+                s0.score = encReward(r0 - score0)
+                # self._update([s0])
         return self
 
     def booking(self, state, act):
@@ -140,18 +134,21 @@ class NNQ(Model):
         S = np.vstack([sa.state for sa in SARs])
         n1 = S.shape[0]
         S1 = np.vstack([sa.state1 for sa in SARs])
+        A = np.vstack([sa.act for sa in SARs])
         r0 = np.vstack([self.reward(sa.act, sa.r()) for sa in SARs])
         if n1 < N_BATCH:
-            S = np.r_[S, self.zeros(N_BATCH-n1)]
-            S1 = np.r_[S1, self.zeros(N_BATCH-n1)]
-            r0 = np.r_[r0, np.zeros((N_BATCH-n1, 4))]
+            dN = N_BATCH - n1
+            S = np.r_[S, self.zeros(dN)]
+            S1 = np.r_[S1, self.zeros(dN)]
+            A = np.r_[S, self.zeros(dN)]
+            r0 = np.r_[r0, np.zeros((dN, 4))]
 
         r01 = self.maxR(S1) * self.gamma
         for i, sa in enumerate(SARs):
             r0[i, sa.act] += r01[i]
 
         R = (1 - self.alpha) * self.eval(S) + self.alpha * r0
-        feed_dict = {self.state: S, self.Q: R}
+        feed_dict = {self.state: S, self.Q: R, self.acts: A.ravel()}
         var_list = [self.optimizer, self.loss]
         _, l = self.sess.run(var_list, feed_dict)
 
@@ -179,7 +176,19 @@ class NNQ(Model):
         assert act != -1
         return act
 
+    def subreplay(self):
+        r = 0
+        li = [(sa.state, sa.act, sa.state1) for sa
+              in self.SARs[self.i0:][::-1]]
+        np.savez_compressed(
+            datetime.now().strftime('data/game.%Y%m%d%H%M%S.npz'),
+            li)
+        for sa in self.SARs[self.i0:][::-1]:
+            # sa.score += r * self.gamma
+            r = sa.score
+
     def replay(self):
+        self.subreplay()
         if self.nolearn:
             return
         N = len(self.SARs)
@@ -190,6 +199,13 @@ class NNQ(Model):
         # idx = np.array(range(N_BATCH))
         SARs = [self.SARs[i] for i in idx]
         self._update(SARs)
+
+    def reset(self):
+        self.score = 0
+        assert self.SARs[-1].state1 is not None
+        if len(self.SARs) > self.RepSize:
+            self.SARs = self.SARs[N_BATCH:]
+        self.i0 = len(self.SARs)
 
     def save(self):
         if self.nolearn:
@@ -376,3 +392,25 @@ def CNN2(N_BATCH):
     model = tf.nn.softmax(
         tf.matmul(hidden, fc2_weights) + fc2_biases)
     return locals()
+
+
+def get_idx(smat, acts):
+    # Get element value by index with each row
+    nrow, ncol = smat.get_shape().as_list()
+    smat1d = tf.reshape(smat, [-1])
+    rng = tf.constant(np.arange(nrow, dtype=np.int32) * ncol)
+    idx = tf.add(rng, acts)
+    ret = tf.gather(smat1d, idx)
+    return ret
+
+
+def RL_LossFunc(parms, mat, acts, target):
+    sret = get_idx(mat, acts)
+    tret = get_idx(target, acts)
+    loss = tf.square(
+        tf.sub(sret, tret)
+        )
+    # regularizer = sum(map(tf.nn.l2_loss, parms))
+    # loss += 1e-4 * regularizer
+    optim_op = tf.train.GradientDescentOptimizer(.1).minimize(loss)
+    return loss, optim_op
