@@ -239,7 +239,7 @@ class NNQ(Model):
             return 0
             idx = np.array(range(N))
         else:
-            idx = np.random.choice(range(N), N_BATCH)
+            idx = np.random.shuffle(range(N))[:N_BATCH]
         SARs = [self.SARs[i] for i in idx]
         return self._update(SARs)
 
