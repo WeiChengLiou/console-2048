@@ -225,7 +225,7 @@ class NNQ(Model):
         r = 0
         for sa in self.SARs[self.i0:][::-1]:
             sa.score += r * self.gamma
-            # r = sa.score
+            r = sa.score
             # if r:
             #     set_trace()
 

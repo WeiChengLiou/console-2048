@@ -227,7 +227,7 @@ class Game:
         self.nturn += 1
         self.reward = r
         self.grid0 = grid_copy
-        if np.max(self.grid) >= 1024:
+        if np.max(self.grid) >= 1024:  # 達成 1024 就算成功
             self.score += self.reward
             self.end = True
             return 1024
@@ -237,7 +237,7 @@ class Game:
             return self.reward
 
         self.end = True
-        return -1024
+        return -1024  # 遊戲結束算失敗
 
     def display(self, noshow=True):
         if noshow:
@@ -248,7 +248,7 @@ class Game:
         return keypad[self.agent.predict(self.grid)]
 
     def update(self, r):
-        r += (bool(not self.end) * 2)
+        r += (bool(not self.end) * 2)  # 沒死掉就加 2 分
         self.reward = r
         self.agent.update(self.grid, r)
 
