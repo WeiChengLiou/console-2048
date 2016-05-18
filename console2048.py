@@ -227,12 +227,17 @@ class Game:
         self.nturn += 1
         self.reward = r
         self.grid0 = grid_copy
+        if np.max(self.grid) >= 1024:
+            self.score += self.reward
+            self.end = True
+            return 1024
+
         if prepare_next_turn(self.grid):
             self.score += self.reward
             return self.reward
 
         self.end = True
-        return 0
+        return -1024
 
     def display(self, noshow=True):
         if noshow:
@@ -243,6 +248,7 @@ class Game:
         return keypad[self.agent.predict(self.grid)]
 
     def update(self, r):
+        r += (bool(not self.end) * 2)
         self.reward = r
         self.agent.update(self.grid, r)
 
@@ -267,6 +273,7 @@ def main(**kwargs):
     Update game state.
     Display updates to user.
     """
+    print('Start')
     agent = initAgent(**kwargs)
     kwargs['agent'] = agent
     result = []
@@ -287,7 +294,7 @@ def main(**kwargs):
             #     continue
             if game.end:
                 game.display(kwargs['noshow'])
-                print("Result:", game.nturn, game.score)
+                print("Result:", game.nturn, game.score, r)
                 break
             game.display(kwargs['noshow'])
         result.append((game.score, game.nturn))
@@ -302,7 +309,7 @@ def main(**kwargs):
     print("Thanks for playing.")
 
 
-def getargs():
+if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', default=1, type=int, help='number of games')
@@ -313,11 +320,6 @@ def getargs():
     parser.add_argument('--train', default=0, help='train mode')
     parser.add_argument('--ckpt', default='', help='check point')
     parser.add_argument('--config', help='config file')
-    return parser
-
-
-if __name__ == "__main__":
-    parser = getargs()
     args = parser.parse_args()
     args = vars(args)
     if args['config']:

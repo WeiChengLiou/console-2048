@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
+import yaml
 from datetime import datetime
 from traceback import print_exc
 import itertools as it
@@ -71,6 +73,8 @@ class NNQ(Model):
         self.epsilon = kwargs.get('epsilon', 0.1)
         self.nRun = kwargs.get('n', 100)
         self.nolearn = not kwargs.get('train', True)
+        self.kw = kwargs.get('kw', '')
+        self.savegame = kwargs.get('savegame', False)
         self.algo = algo
         self.RepSize = N_REPSIZE
         self.score = 0
@@ -101,15 +105,18 @@ class NNQ(Model):
                 times=self.nRun,
                 )
 
+    def show(self):
+        for i in range(len(self.SARs)):
+            print i, self.SARs[i].score
+
     def update(self, state, r0):
-        score0, self.score = self.score, r0
         state = encState(state)
         # receive state class
         if self.SARs and (not self.nolearn):
             s0 = self.SARs[-1]
             if s0.state1 is None:
                 s0.state1 = state
-                s0.score = encReward(r0 - score0)
+                s0.score = encReward(r0)
                 # self._update([s0])
         return self
 
@@ -140,7 +147,7 @@ class NNQ(Model):
             dN = N_BATCH - n1
             S = np.r_[S, self.zeros(dN)]
             S1 = np.r_[S1, self.zeros(dN)]
-            A = np.r_[S, self.zeros(dN)]
+            A = np.r_[A, np.zeros((dN, 1), dtype=np.int64)]
             r0 = np.r_[r0, np.zeros((dN, 4))]
 
         r01 = self.maxR(S1) * self.gamma
@@ -150,7 +157,8 @@ class NNQ(Model):
         R = (1 - self.alpha) * self.eval(S) + self.alpha * r0
         feed_dict = {self.state: S, self.Q: R, self.acts: A.ravel()}
         var_list = [self.optimizer, self.loss]
-        _, l = self.sess.run(var_list, feed_dict)
+        _, losshat = self.sess.run(var_list, feed_dict)
+        return losshat
 
     def predict(self, state):
         state = encState(state)
@@ -175,43 +183,6 @@ class NNQ(Model):
             break
         assert act != -1
         return act
-
-    def subreplay(self):
-        r = 0
-        li = [(sa.state, sa.act, sa.state1) for sa
-              in self.SARs[self.i0:][::-1]]
-        np.savez_compressed(
-            datetime.now().strftime('data/game.%Y%m%d%H%M%S.npz'),
-            li)
-        for sa in self.SARs[self.i0:][::-1]:
-            # sa.score += r * self.gamma
-            r = sa.score
-
-    def replay(self):
-        self.subreplay()
-        if self.nolearn:
-            return
-        N = len(self.SARs)
-        if (N < N_BATCH) or (self.nolearn):
-            print N, 'NO Replay'
-            return
-        idx = np.random.choice(range(N), N_BATCH)
-        # idx = np.array(range(N_BATCH))
-        SARs = [self.SARs[i] for i in idx]
-        self._update(SARs)
-
-    def reset(self):
-        self.score = 0
-        assert self.SARs[-1].state1 is not None
-        if len(self.SARs) > self.RepSize:
-            self.SARs = self.SARs[N_BATCH:]
-        self.i0 = len(self.SARs)
-
-    def save(self):
-        if self.nolearn:
-            return
-        self.saveobj.save(self.getparm())
-        self.saver.save(self.sess, 'tmp/%s.ckpt' % self.algo)
 
     def reward(self, a, r):
         """
@@ -243,9 +214,57 @@ class NNQ(Model):
         return [(p.name, val) for p, val in
                 zip(self.parms, self.sess.run(self.parms))]
 
+    def subreplay(self):
+        if self.savegame:
+            li = [(sa.state, sa.act, sa.score) for sa
+                  in self.SARs[self.i0:][::-1]]
+            np.savez_compressed(
+                datetime.now().strftime('data/game.%Y%m%d%H%M%S.npz'),
+                li)
+
+        r = 0
+        for sa in self.SARs[self.i0:][::-1]:
+            # sa.score += r * self.gamma
+            r = sa.score
+            if r:
+                set_trace()
+
+    def replay(self):
+        self.subreplay()
+        if self.nolearn:
+            return
+        N = len(self.SARs)
+        if (N < N_BATCH) or (self.nolearn):
+            print N, 'NO Replay'
+            return 0
+            idx = np.array(range(N))
+        else:
+            idx = np.random.choice(range(N), N_BATCH)
+        SARs = [self.SARs[i] for i in idx]
+        return self._update(SARs)
+
+    def reset(self):
+        self.score = 0
+        assert self.SARs[-1].state1 is not None
+        if len(self.SARs) > self.RepSize:
+            self.SARs = self.SARs[N_BATCH:]
+        self.i0 = len(self.SARs)
+
+    def save(self):
+        if self.nolearn:
+            return
+        self.saveobj.save(self.getparm())
+        self.saver.save(
+            self.sess,
+            'tmp/%s%s.ckpt' % (self.algo, self.kw)
+            )
+        return self
+
     def load(self):
-        fi = 'tmp/%s.ckpt' % self.algo
-        self.saver.restore(self.sess, fi)
+        fi = 'tmp/%s%s.ckpt' % (self.algo, self.kw)
+        if os.path.exists(fi):
+            self.saver.restore(self.sess, fi)
+        return self
 
 
 def ANN(N_BATCH):
@@ -414,3 +433,60 @@ def RL_LossFunc(parms, mat, acts, target):
     # loss += 1e-4 * regularizer
     optim_op = tf.train.GradientDescentOptimizer(.1).minimize(loss)
     return loss, optim_op
+
+
+def NFQ(**kwargs):
+    saveflag = False
+    agent = NNQ(**kwargs)
+    agent.load()
+    SARs = agent.SARs
+    print len(SARs)
+    nlim = 10000
+    train = range(187)
+    test = range(188, 363)
+    flag = train
+
+    for i, fi in enumerate(os.listdir('data')):
+        if i not in flag:
+            continue
+        fi = 'data/%s' % fi
+        rets = np.load(fi)['arr_0']
+        for ret in rets:
+            sa = StateAct(*ret)
+            if SARs and (SARs[-1].state1 is None):
+                SARs[-1].state1 = sa.state
+                if len(SARs) == N_REPSIZE:
+                    break
+            SARs.append(sa)
+        if len(SARs) < N_REPSIZE:
+            SARs.remove(SARs[-1])
+            loss = agent.replay()
+            print np.mean(loss), len(SARs)
+            if i == nlim:
+                break
+        else:
+            break
+    loss = agent.replay()
+    print np.mean(loss), len(SARs)
+    if saveflag:
+        agent.save()
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', help='config file')
+    args = parser.parse_args()
+    args = vars(args)
+    if args['config']:
+        config = yaml.load(open(args['config'], 'rb'))
+        args.update(config)
+    args['agent'] = args['agent'].lower()
+    print(args)
+
+    if args.get('N_BATCH'):
+        N_BATCH = args['N_BATCH']
+    if args.get('N_REPSIZE'):
+        N_REPSIZE = args['N_REPSIZE']
+
+    NFQ(**args)
