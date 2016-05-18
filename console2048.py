@@ -294,7 +294,7 @@ def main(**kwargs):
             #     continue
             if game.end:
                 game.display(kwargs['noshow'])
-                print("Result:", game.nturn, game.score, r)
+                print("Result:", game.nturn, game.score)
                 break
             game.display(kwargs['noshow'])
         result.append((game.score, game.nturn))
