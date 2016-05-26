@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 import tensorflow as tf
 from operator import mul
-
+relu = tf.nn.relu
+softmax = tf.nn.softmax
 strides = [
     None,
     [1, 1, 1, 1],
@@ -14,7 +15,11 @@ def add_conv(inpt, fsize, chnl, nstride, padding='SAME'):
     stride = strides[nstride]
     c0 = inpt.get_shape().as_list()[-1]
     fsize = [3, 3, c0, chnl]
-    filter1 = tf.Variable(tf.random_normal(fsize), trainable=True)
+    filter1 = tf.Variable(
+        tf.random_normal(fsize),
+        name='conv_filter',
+        trainable=True,
+        )
     return tf.nn.conv2d(inpt, filter1, strides=stride, padding=padding)
 
 
@@ -48,9 +53,11 @@ def add_fullcon(inpt, ndim, normfun=None):
 
     weight = tf.Variable(
         normfun([size1[1], ndim]),
+        name='weight',
         trainable=True)
     bias = tf.Variable(
         tf.zeros([ndim]),
+        name='bias',
         trainable=True)
     return tf.matmul(newinpt, weight) + bias
 
