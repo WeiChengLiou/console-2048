@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import numpy as np
-import pdb
+from pdb import set_trace
 
 
 class State(object):
@@ -33,10 +33,12 @@ vfunc = np.vectorize(lambda x, y: np.log2(max(x, y))/20)
 
 
 def encState(state):
-    """ encode original state into two boards """
+    """ encode original state as [1, frame, row, col]"""
+    for i in range(4):
+        assert len(state[i]) == 4
     s1 = np.array(state).astype(np.float)
     s1 = vfunc(s1, 1)
-    return s1.reshape((1, 4, 4, 1))
+    return s1.reshape((1, 4, 4, 4))
 
 
 def chkEmpty(s1, i):

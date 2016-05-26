@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+from datetime import datetime
 from pdb import set_trace
 import yaml
 import numpy as np
@@ -215,11 +216,15 @@ class Game:
         self.nturn = 0
         self.reward = 0
         self.end = False
+        self.records = []
         self.agent = kwargs['agent']
+        self.agent.setgame(self)
+        self.saveflag = kwargs.get('savegame', False)
 
     def move(self, direction):
         grid_copy = copy.deepcopy(self.grid)
         r = self.moves[direction](self.grid)
+        self.booking(grid_copy, direction, r)
 
         if self.grid == grid_copy:
             return 0
@@ -253,7 +258,19 @@ class Game:
         self.agent.update(self.grid, r)
 
     def reset(self):
+        self.records = []
         self.agent.reset()
+
+    def booking(self, state, act, r):
+        self.records.append((state, act, r))
+
+    def savegame(self, r):
+        s0 = self.records[-1]
+        self.records[-1] = (s0[0], s0[1], r)
+        if self.saveflag:
+            np.savez_compressed(
+                datetime.now().strftime('data/game.%Y%m%d%H%M%S.npz'),
+                self.records)
 
 
 def initAgent(**kwargs):
@@ -293,6 +310,7 @@ def main(**kwargs):
             #     print("\nInvalid choice.")
             #     continue
             if game.end:
+                game.savegame(r)
                 game.display(kwargs['noshow'])
                 print("Result:", game.nturn, game.score)
                 break

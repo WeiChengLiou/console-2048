@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import copy
+from tftools import *
 import os
 import yaml
 from datetime import datetime
@@ -109,16 +111,26 @@ class NNQ(Model):
         for i in range(len(self.SARs)):
             print i, self.SARs[i].score
 
-    def update(self, state, r0):
-        state = encState(state)
+    def setgame(self, game):
+        self.records = game.records
+
+    def update(self, state1, r0):
         # receive state class
-        if self.SARs and (not self.nolearn):
-            s0 = self.SARs[-1]
-            if s0.state1 is None:
-                s0.state1 = state
-                s0.score = encReward(r0)
-                # self._update([s0])
-        return self
+        try:
+            if (len(self.records) <= 3):
+                return self
+
+            if self.SARs and (not self.nolearn):
+                state1 = self.encState(state1)
+                s0 = self.SARs[-1]
+                if s0.state1 is None:
+                    s0.state1 = state1
+                    s0.score = encReward(r0)
+                    # self._update([s0])
+            return self
+        except:
+            print_exc()
+            set_trace()
 
     def booking(self, state, act):
         if self.SARs:
@@ -161,12 +173,16 @@ class NNQ(Model):
         return losshat
 
     def predict(self, state):
-        state = encState(state)
+        # state = encState(state)
         """ epsilon-greedy algorithm """
-        if random() > self.epsilon:
-            act = self._action(state)
-        else:
+        if (len(self.records) < 3):
+            return rndAction(state)
+
+        state = self.encState(state)
+        if random() < self.epsilon:
             act = rndAction(state)
+        else:
+            act = self._action(state)
         self.booking(state, act)
         return act
 
@@ -215,13 +231,6 @@ class NNQ(Model):
                 zip(self.parms, self.sess.run(self.parms))]
 
     def subreplay(self):
-        if self.savegame:
-            li = [(sa.state, sa.act, sa.score) for sa
-                  in self.SARs[self.i0:][::-1]]
-            np.savez_compressed(
-                datetime.now().strftime('data/game.%Y%m%d%H%M%S.npz'),
-                li)
-
         r = 0
         for sa in self.SARs[self.i0:][::-1]:
             sa.score += r * self.gamma
@@ -266,36 +275,24 @@ class NNQ(Model):
             self.saver.restore(self.sess, fi)
         return self
 
+    def encState(self, state):
+        s1 = []
+        [s1.extend(copy.deepcopy(r[0])) for r in self.records[-3:]]
+        s1.extend(copy.deepcopy(state))
+        assert len(s1) == 16
+        return encState(s1)
+
 
 def ANN(N_BATCH):
-    zeros = lambda x: np.zeros((x, 4, 4, 1))
-    new_shape = (N_BATCH, 4, 4, 1)
+    zeros = lambda x: np.zeros((x, 4, 4, 4))
+    new_shape = (N_BATCH, 4, 4, 4)
     state = tf.placeholder(tf.float32, shape=new_shape)
-    newstate = tf.reshape(state, [N_BATCH, 4 * 4])
-    fc1_weights = tf.Variable(
-        tf.truncated_normal([16, 32], stddev=0.1, seed=SEED),
-        trainable=True,
-        name='fc1_weights',
-        )
-    fc1_biases = tf.Variable(
-        tf.zeros([32]),
-        trainable=True,
-        name='fc1_biases',
-        )
-    fc2_weights = tf.Variable(
-        tf.truncated_normal([32, 4], stddev=0.1, seed=SEED),
-        trainable=True,
-        name='fc2_weights',
-        )
-    fc2_biases = tf.Variable(
-        tf.zeros([4]),
-        trainable=True,
-        name='fc2_biases',
-        )
-    model = tf.nn.relu(
-        tf.matmul(newstate, fc1_weights) + fc1_biases)
-    model = tf.nn.softmax(
-        tf.matmul(model, fc2_weights) + fc2_biases)
+    normfun = lambda size: tf.truncated_normal(size, stddev=0.1, seed=SEED)
+
+    model = tf.nn.relu(add_fullcon(state, 32))
+    model = tf.nn.relu(add_fullcon(state, 16))
+    model = tf.nn.relu(add_fullcon(state, 8))
+    model = tf.nn.softmax(add_fullcon(model, 4))
     return locals()
 
 
