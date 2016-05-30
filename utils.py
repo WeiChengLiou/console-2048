@@ -29,7 +29,7 @@ class StateAct(object):
             return self.score
 
 
-vfunc = np.vectorize(lambda x, y: np.log2(max(x, y))/20)
+vfunc = np.vectorize(lambda x, y: np.log2(max(x, y)))
 
 
 def encState(state):

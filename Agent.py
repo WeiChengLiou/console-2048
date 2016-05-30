@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from matplotlib import pylab as plt
 import copy
 from tftools import *
 import os
@@ -137,7 +138,7 @@ class NNQ(Model):
                 s0.state1 = state1
                 s0.score = encReward(r0)
                 # self._update([s0])
-                self.replay()
+                # self.replay()
         return self
 
     def booking(self, state, act):
@@ -158,30 +159,18 @@ class NNQ(Model):
     def _update(self, SARs):
         """
         Q-learning:
-            R(t+1) = a * R'(St, At) +
-                     (1-a) * (R(St, At) + g * max_a(R'(St1, a)))
+            R(t+1) = r + gamma * max_a(R'(St1, a)) - R(St, At)
             https://en.wikipedia.org/wiki/Q-learning
         """
         S = np.vstack([sa.state for sa in SARs])
-        n1 = S.shape[0]
         S1 = np.vstack([sa.state1 for sa in SARs])
         A = np.vstack([sa.act for sa in SARs])
-        r0 = np.vstack([self.reward(sa.act, sa.r()) for sa in SARs])
-        if n1 < N_BATCH:
-            print 'fill empty data'
-            dN = N_BATCH - n1
-            S = np.r_[S, self.zeros(dN)]
-            S1 = np.r_[S1, self.zeros(dN)]
-            A = np.r_[A, np.zeros((dN, 1), dtype=np.int64)]
-            r0 = np.r_[r0, np.zeros((dN, 4))]
+        R = np.vstack([self.reward(sa.act, sa.r()) for sa in SARs])
 
-        if not self.trainNFQ:
-            r01 = self.maxR(S1) * self.gamma
-            for i, sa in enumerate(SARs):
-                r0[i, sa.act] += r01[i]
+        r1 = self.gamma * self.maxR(S1)
+        for i, sa in enumerate(SARs):
+            R[i, sa.act] += r1[i]
 
-        # R = (1 - self.alpha) * self.eval(S) + self.alpha * r0
-        R = r0
         feed_dict = {self.state: S, self.Q: R, self.acts: A.ravel()}
         var_list = [self.optimizer, self.loss]
         _, losshat = self.sess.run(var_list, feed_dict)
@@ -233,10 +222,6 @@ class NNQ(Model):
 
     def eval(self, state):
         assert type(state) == np.ndarray, type(state)
-        n = state.shape[0]
-        if n < N_BATCH:
-            state = np.r_[state, self.zeros(N_BATCH-n)]
-
         r, = self.sess.run(
             [self.model],
             feed_dict={self.state: state})
@@ -259,12 +244,30 @@ class NNQ(Model):
         if self.nolearn:
             return
         N = len(self.SARs)
-        if (N < N_BATCH) or (self.nolearn):
+        if (N < N_REPSIZE) or (self.nolearn):
             return None
-        else:
-            idx = np.random.permutation(range(N))[:N_BATCH]
-        SARs = [self.SARs[i] for i in idx]
-        return self._update(SARs)
+
+        li = []
+        idx = np.random.permutation(range(N))
+        try:
+            for t in xrange(30000):
+                SARs = [self.SARs[i] for i in idx[:N_BATCH]]
+                assert len(SARs) == N_BATCH, len(SARs)
+                ret = self._update(SARs)
+                li.append(ret)
+                if (t >= 1000) and (t % 1000 == 0):
+                    print t, ret
+
+                idx = idx[N_BATCH:]
+                if len(idx) <= N_BATCH:
+                    idx = np.random.permutation(range(N))
+        except:
+            print_exc()
+            set_trace()
+        li = np.convolve(np.array(li), np.ones(10)/10, mode='full')[:-10]
+        plt.plot(li[100::100][1:])
+        plt.show()
+        return ret
 
     def reset(self):
         self.score = 0
@@ -305,10 +308,10 @@ def ANN(N_BATCH):
     state = tf.placeholder(tf.float32, shape=new_shape)
     normfun = lambda size: tf.truncated_normal(size, stddev=0.1, seed=SEED)
 
-    model = relu(add_fullcon(state, 32))
+    model = relu(add_fullcon(state, 256))
+    model = relu(add_fullcon(model, 64))
     model = relu(add_fullcon(model, 16))
-    model = relu(add_fullcon(model, 8))
-    model = softmax(add_fullcon(model, 4))
+    model = relu(add_fullcon(model, 4))
     return locals()
 
 
@@ -321,11 +324,11 @@ def CNN(N_BATCH):
     model = relu(add_conv(state, [2, 2], 16, 1))
     model = relu(add_conv(model, [2, 2], 32, 1))
     model = relu(add_fullcon(model, 256))
-    model = softmax(add_fullcon(model, 4))
+    model = relu(add_fullcon(model, 4))
     return locals()
 
 
-def get_idx(smat, acts):
+def getidx(smat, acts):
     # Get element value by index with each row
     nrow, ncol = smat.get_shape().as_list()
     smat1d = tf.reshape(smat, [-1])
@@ -335,15 +338,25 @@ def get_idx(smat, acts):
     return ret
 
 
+def feval(model, s, a):
+    return getidx(model, a)
+
+
+def ExpReplay(model, s_, a_, r_, s1_, gamma):
+    Q = getidx(model, a)
+    Q1 = feval(model, s1_, a_)
+    return r_ + gamma * Q1 - Q
+
+
 def RL_LossFunc(parms, mat, acts, target):
-    sret = get_idx(mat, acts)
-    tret = get_idx(target, acts)
-    loss = tf.square(
+    sret = getidx(mat, acts)
+    tret = getidx(target, acts)
+    loss = tf.reduce_mean(tf.square(
         tf.sub(sret, tret)
-        )
+        ))
     regularizer = sum(map(tf.nn.l2_loss, parms))
     loss += 1e-4 * regularizer
-    optim_op = tf.train.GradientDescentOptimizer(.1).minimize(loss)
+    optim_op = tf.train.AdamOptimizer(1e-1).minimize(loss)
     return loss, optim_op
 
 
@@ -355,7 +368,7 @@ def NFQ(**kwargs):
 
     SARs = agent.SARs
     nlim = 20000
-    train = range(80)
+    train = range(64)
     test = range(188, 363)
     ALL = range(nlim)
     flag = train
@@ -375,6 +388,8 @@ def NFQ(**kwargs):
             rec.append(ret)
             if len(rec) >= 5:
                 r = ret[2]
+                if r >= 0:
+                    r += 2
                 s1 = agent.encState(gets(rec[-4:]), noadd=True)
                 agent.update(s1, r)
             if (len(rec) >= 4) and (j != jend):
@@ -382,14 +397,16 @@ def NFQ(**kwargs):
                 act = ret[1]
                 agent.booking(s0, act)
 
+        for t, sa in enumerate(agent.SARs):
+            assert sa.state1 is not None, t
         loss = agent.replay()
-        print np.mean(loss), len(SARs)
-        agent.reset()
-        if len(SARs) >= 20000:
-            print 'full index', i
+        if loss is not None:
+            print i, np.mean(loss), len(SARs)
             break
-    loss = agent.replay()
-    print np.mean(loss), len(SARs)
+        agent.reset()
+
+    # loss = agent.replay()
+    # print i, np.mean(loss), len(SARs)
     if saveflag:
         agent.save()
 
