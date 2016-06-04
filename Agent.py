@@ -92,9 +92,15 @@ class NNQ(Model):
         self.parms = tf.trainable_variables()
         self.acts = tf.placeholder(tf.int32, shape=[N_BATCH])
 
+        for x in self.parms:
+            tf.histogram_summary(x.name, x)
+
         self.loss, self.optimizer = RL_LossFunc(
             self.parms, self.model, self.acts, self.Q)
         self.saver = tf.train.Saver(self.parms)
+
+        tf.scalar_summary('loss', self.loss)
+        self.summary = tf.merge_all_summaries()
 
         # Before starting, initialize the variables.  We will 'run' this first.
         self.init = tf.initialize_all_variables()
@@ -102,6 +108,9 @@ class NNQ(Model):
         # Launch the graph.
         self.sess = tf.Session()
         self.sess.run(self.init)
+        self.writer_sum = tf.train.SummaryWriter(
+            'tmp/logs', self.sess.graph_def)
+        self.tickcnt = 0
 
         if not self.nolearn:
             self.saveobj = savedata.SaveObj(
@@ -172,9 +181,9 @@ class NNQ(Model):
             R[i, sa.act] += r1[i]
 
         feed_dict = {self.state: S, self.Q: R, self.acts: A.ravel()}
-        var_list = [self.optimizer, self.loss]
-        _, losshat = self.sess.run(var_list, feed_dict)
-        return losshat
+        var_list = [self.optimizer, self.loss, self.summary]
+        _, loss_res, merge_res = self.sess.run(var_list, feed_dict)
+        return loss_res, merge_res
 
     def predict(self, state):
         # state = encState(state)
@@ -247,27 +256,18 @@ class NNQ(Model):
         if (N < N_REPSIZE) or (self.nolearn):
             return None
 
-        li = []
         idx = np.random.permutation(range(N))
-        try:
-            for t in xrange(30000):
-                SARs = [self.SARs[i] for i in idx[:N_BATCH]]
-                assert len(SARs) == N_BATCH, len(SARs)
-                ret = self._update(SARs)
-                li.append(ret)
-                if (t >= 1000) and (t % 1000 == 0):
-                    print t, ret
-
-                idx = idx[N_BATCH:]
-                if len(idx) <= N_BATCH:
-                    idx = np.random.permutation(range(N))
-        except:
-            print_exc()
-            set_trace()
-        li = np.convolve(np.array(li), np.ones(10)/10, mode='full')[:-10]
-        plt.plot(li[100::100][1:])
-        plt.show()
-        return ret
+        for t in xrange(0, N_REPSIZE, N_BATCH):
+            SARs = [self.SARs[i] for i in idx[t:(t+N_BATCH)]]
+            if len(SARs) != N_BATCH:
+                continue
+            assert len(SARs) == N_BATCH, (t, map(len, (SARs, self.SARs)))
+            loss_res, merge_res = self._update(SARs)
+            if t and (t % 100 == 0):
+                self.writer_sum.add_summary(
+                    merge_res, self.tickcnt)
+                self.tickcnt += 1
+        return loss_res
 
     def reset(self):
         self.score = 0
@@ -342,12 +342,6 @@ def feval(model, s, a):
     return getidx(model, a)
 
 
-def ExpReplay(model, s_, a_, r_, s1_, gamma):
-    Q = getidx(model, a)
-    Q1 = feval(model, s1_, a_)
-    return r_ + gamma * Q1 - Q
-
-
 def RL_LossFunc(parms, mat, acts, target):
     sret = getidx(mat, acts)
     tret = getidx(target, acts)
@@ -356,7 +350,7 @@ def RL_LossFunc(parms, mat, acts, target):
         ))
     regularizer = sum(map(tf.nn.l2_loss, parms))
     loss += 1e-4 * regularizer
-    optim_op = tf.train.AdamOptimizer(1e-1).minimize(loss)
+    optim_op = tf.train.AdamOptimizer(1e-2).minimize(loss)
     return loss, optim_op
 
 
@@ -368,7 +362,7 @@ def NFQ(**kwargs):
 
     SARs = agent.SARs
     nlim = 20000
-    train = range(64)
+    train = range(188)
     test = range(188, 363)
     ALL = range(nlim)
     flag = train
@@ -399,10 +393,11 @@ def NFQ(**kwargs):
 
         for t, sa in enumerate(agent.SARs):
             assert sa.state1 is not None, t
-        loss = agent.replay()
-        if loss is not None:
-            print i, np.mean(loss), len(SARs)
-            break
+
+        if i % 5 == 0:
+            loss = agent.replay()
+            if loss is not None:
+                print i, np.mean(loss), len(SARs)
         agent.reset()
 
     # loss = agent.replay()
