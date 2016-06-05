@@ -36,6 +36,20 @@ def rndAction(state):
         set_trace()
 
 
+class SARli(types.ListType):
+    def state(self):
+        return [x.state for x in self]
+
+    def act(self):
+        return [x.act for x in self]
+
+    def r(self):
+        return [x.r() for x in self]
+
+    def state1(self):
+        return [x.state1 for x in self]
+
+
 class Model(object):
     def evalR(self, wl):
         """ evalaute reward given state """
@@ -71,7 +85,7 @@ class NNQ(Model):
     def __init__(self, **kwargs):
         algo = kwargs.get('algo', 'ANN')
         print('Use %s' % algo)
-        self.SARs = []  # List of (state, action)
+        self.SARs = SARli()  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
         self.gamma = kwargs.get('gamma', 0.5)  # Discount factor
         self.epsilon = kwargs.get('epsilon', 0.1)
@@ -171,9 +185,9 @@ class NNQ(Model):
             R(t+1) = r + gamma * max_a(R'(St1, a)) - R(St, At)
             https://en.wikipedia.org/wiki/Q-learning
         """
-        S = np.vstack([sa.state for sa in SARs])
-        S1 = np.vstack([sa.state1 for sa in SARs])
-        A = np.vstack([sa.act for sa in SARs])
+        S = np.vstack(SARs.state)
+        S1 = np.vstack(SARs.state1)
+        A = np.vstack(SARs.act)
         R = np.vstack([self.reward(sa.act, sa.r()) for sa in SARs])
 
         r1 = self.gamma * self.maxR(S1)
@@ -231,6 +245,7 @@ class NNQ(Model):
 
     def eval(self, state):
         assert type(state) == np.ndarray, type(state)
+        state = self.FULL(state)
         r, = self.sess.run(
             [self.model],
             feed_dict={self.state: state})
@@ -258,7 +273,7 @@ class NNQ(Model):
 
         idx = np.random.permutation(range(N))
         for t in xrange(0, N_REPSIZE, N_BATCH):
-            SARs = [self.SARs[i] for i in idx[t:(t+N_BATCH)]]
+            SARs = SARli([self.SARs[i] for i in idx[t:(t+N_BATCH)]])
             if len(SARs) != N_BATCH:
                 continue
             assert len(SARs) == N_BATCH, (t, map(len, (SARs, self.SARs)))
@@ -292,6 +307,10 @@ class NNQ(Model):
         if os.path.exists(fi):
             self.saver.restore(self.sess, fi)
         return self
+
+    def FULL(self, s0):
+        n = N_BATCH - s0.shape[0]
+        return np.vstack([s0, self.zeros(n)])
 
     def encState(self, state, noadd=False):
         s1 = []
@@ -328,23 +347,54 @@ def CNN(N_BATCH):
     return locals()
 
 
-def getidx(smat, acts):
+def getidx(mat, acts):
     # Get element value by index with each row
-    nrow, ncol = smat.get_shape().as_list()
-    smat1d = tf.reshape(smat, [-1])
+    nrow, ncol = mat.get_shape().as_list()
+    mat_1d = tf.reshape(mat, [-1])
     rng = tf.constant(np.arange(nrow, dtype=np.int32) * ncol)
     idx = tf.add(rng, acts)
-    ret = tf.gather(smat1d, idx)
+    ret = tf.gather(mat_1d, idx)
     return ret
 
 
-def feval(model, s, a):
-    return getidx(model, a)
+fgetidx = tf.make_template('getidx', getidx)
 
 
-def RL_LossFunc(parms, mat, acts, target):
-    sret = getidx(mat, acts)
-    tret = getidx(target, acts)
+def maxR(fQ, state1):
+    assert isinstance(state1, tf.python.framework.ops.Tensor)
+    R1_mat = fQ(state1)
+    R1_max = tf.reduce_max(R1_mat, reduction_indices=[1])
+    size0 = getshape(R1_max)
+    size1 = [size0[0], 1]
+    return tf.reshape(R1_max, size1)
+
+
+def Target_LossFunc(obj, s0, acts, r, s1):
+    """
+    - Use old weight to calculate:
+        R1(r, gamma, s1, Q) = r + gamma * max_a Q(s1, a)
+    - Loss Tensor:
+        Loss(R1, s0, acts, Q) = mean(sqrt(R1 - Q(s0, acts)))
+    - Minimize Loss:
+        Optim(R1, s0, acts, Q) = tf.train.AnyOptimizer(Loss)
+    """
+    R1 = maxR(obj.fQ, s1)
+    target = r + obj.gamma * R1_max
+
+
+def ExpReplay_LossFunc(model):
+    """
+    - Define Loss:
+        Loss(r, gamma, s1, s0, acts, Q) =
+            mean(sqrt(r + gamma * max_a Q(s1, a) - Q(s0, acts)))
+    - Minimize Loss:
+        Optim(r, gamma, s1, s0, acts, Q) = tf.train.AnyOptimizer(Loss)
+    """
+
+
+def RL_LossFunc(parms, model, acts, Q):
+    sret = fgetidx(model, acts)
+    tret = fgetidx(Q, acts)
     loss = tf.reduce_mean(tf.square(
         tf.sub(sret, tret)
         ))
