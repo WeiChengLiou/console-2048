@@ -201,7 +201,7 @@ class NNQ(Model):
             if Target:
                 ret = self.TargetNetwork_opt.optimize(parms)
             else:
-                ret = self.optimize(parms)
+                ret = self.optimize(*parms)
 
             if ret is not None:
                 loss_res, merge_res = ret
