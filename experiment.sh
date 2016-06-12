@@ -1,4 +1,4 @@
-./Agent.sh --config NFQ.conf
-./Agent.sh --config NFQ1.conf
-./Agent.sh --config NFQ2.conf
-./Agent.sh --config NFQ3.conf
+./Agent.py --config NFQ.conf
+./Agent.py --config NFQ1.conf
+./Agent.py --config NFQ2.conf
+./Agent.py --config NFQ3.conf
