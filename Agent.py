@@ -1,28 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from matplotlib import pylab as plt
 import copy
 from tftools import *
 import os
 import yaml
-from datetime import datetime
 from traceback import print_exc
 import itertools as it
 import tensorflow as tf
 import numpy as np
 from pdb import set_trace
 from random import random, randint
-from utils import chkEmpty, StateAct, encState, encReward
+from utils import chkEmpty, StateAct, encState, encReward, zeros
 import savedata
 from operator import mul
-
-
-# Implementation of Neural-Q
-# Use tensorflow to construct neural network framework
-# Need to define reward, loss, training process
-# Unlike usual NN, the training and test process do at the same time.
-# When we try to predict an action, we update our network when new state/reward arrives.
+from abc import types
 SEED = 34654
 N_BATCH = 100
 N_REPSIZE = 500
@@ -38,16 +30,16 @@ def rndAction(state):
 
 class SARli(types.ListType):
     def state(self):
-        return [x.state for x in self]
+        return np.vstack([x.state for x in self])
 
     def act(self):
-        return [x.act for x in self]
+        return np.vstack([x.act for x in self])
 
     def r(self):
-        return [x.r() for x in self]
+        return np.vstack([x.r() for x in self])
 
     def state1(self):
-        return [x.state1 for x in self]
+        return np.vstack([x.state1 for x in self])
 
 
 class Model(object):
@@ -99,31 +91,43 @@ class NNQ(Model):
         self.score = 0
         self.i0 = 0
 
-        self.Q = tf.placeholder(tf.float32, shape=[N_BATCH, 4])
-        self.__dict__.update(
-            eval(algo)(N_BATCH)  # Build up NN structure
-            )
-        self.parms = tf.trainable_variables()
+        self.state = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
         self.acts = tf.placeholder(tf.int32, shape=[N_BATCH])
+        self.r = tf.placeholder(tf.float32, shape=[N_BATCH, 1])
+        self.state1 = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
+
+        self.model_init = eval(algo)
+        self.model = self.model_init(self.state, 'model', reuse=None)
+        self.Qhat = self.model_init(self.state1, 'model', reuse=True)
+        self.loss_def(
+            self.acts,
+            self.r,
+            self.gamma,
+            )
+        self.parms = listVar(self.model)
 
         for x in self.parms:
             tf.histogram_summary(x.name, x)
 
-        self.loss, self.optimizer = RL_LossFunc(
-            self.parms, self.model, self.acts, self.Q)
+        self.ExpReplay_opt = ExpReplay(
+            self, shuffle=kwargs['shuffle'])
+        self.TargetNetwork_opt = TargetNetwork(
+            self, enable=kwargs['TargetNetwork'])
         self.saver = tf.train.Saver(self.parms)
 
         tf.scalar_summary('loss', self.loss)
+        tf.scalar_summary(
+            'Target.loss', self.TargetNetwork_opt.loss)
         self.summary = tf.merge_all_summaries()
 
         # Before starting, initialize the variables.  We will 'run' this first.
-        self.init = tf.initialize_all_variables()
+        init = tf.initialize_all_variables()
 
         # Launch the graph.
         self.sess = tf.Session()
-        self.sess.run(self.init)
+        self.sess.run(init)
         self.writer_sum = tf.train.SummaryWriter(
-            'tmp/logs', self.sess.graph_def)
+            'tmp/logs', self.sess.graph)
         self.tickcnt = 0
 
         if not self.nolearn:
@@ -160,8 +164,6 @@ class NNQ(Model):
             if (s0.state1 is None) or self.trainNFQ:
                 s0.state1 = state1
                 s0.score = encReward(r0)
-                # self._update([s0])
-                # self.replay()
         return self
 
     def booking(self, state, act):
@@ -179,25 +181,33 @@ class NNQ(Model):
             print_exc()
             set_trace()
 
-    def _update(self, SARs):
-        """
-        Q-learning:
-            R(t+1) = r + gamma * max_a(R'(St1, a)) - R(St, At)
-            https://en.wikipedia.org/wiki/Q-learning
-        """
-        S = np.vstack(SARs.state)
-        S1 = np.vstack(SARs.state1)
-        A = np.vstack(SARs.act)
-        R = np.vstack([self.reward(sa.act, sa.r()) for sa in SARs])
+    def _update(self, Target=False):
+        if self.nolearn:
+            return
+        N = len(self.SARs)
+        if (N < N_REPSIZE) or (self.nolearn):
+            return None
 
-        r1 = self.gamma * self.maxR(S1)
-        for i, sa in enumerate(SARs):
-            R[i, sa.act] += r1[i]
+        iter1 = self.ExpReplay_opt.getli(self.SARs)
+        # SARs = it.islice(iter1, 1)
+        for t, SARs in enumerate(iter1):
+            S = SARs.state()
+            A = SARs.act().ravel()
+            R = SARs.r()
+            S1 = SARs.state1()
 
-        feed_dict = {self.state: S, self.Q: R, self.acts: A.ravel()}
-        var_list = [self.optimizer, self.loss, self.summary]
-        _, loss_res, merge_res = self.sess.run(var_list, feed_dict)
-        return loss_res, merge_res
+            parms = self.sess, S, A, R, S1, self.summary
+            if Target:
+                ret = self.TargetNetwork_opt.optimize(parms)
+            else:
+                ret = self.optimize(parms)
+
+            if ret is not None:
+                loss_res, merge_res = ret
+                if t and (t % 100 == 0):
+                    self.writer_sum.add_summary(
+                        merge_res, self.tickcnt)
+                    self.tickcnt += 1
 
     def predict(self, state):
         # state = encState(state)
@@ -221,68 +231,21 @@ class NNQ(Model):
         Best action: argmax( R(s, a) + gamma * max(R(s', a')) )
         """
         act = -1
-        rewards = self.eval(state)
+        assert type(state) == np.ndarray, type(state)
+        state = self.FULL(state)
+        r, = self.sess.run(
+            [self.model],
+            feed_dict={self.state: state})
+
         for i in np.argsort(rewards[0, :].ravel())[::-1]:
             act = i
             break
         assert act != -1
         return act
 
-    def reward(self, a, r):
-        """
-        Reward function
-        """
-        rmat = np.zeros([4], dtype=np.float32)
-        if r != 0:
-            rmat[a] = r
-        return rmat
-
-    def rewardS(self, sa):
-        return self.reward(sa.act, sa.r)
-
-    def maxR(self, state):
-        return self.eval(state).max(axis=1)
-
-    def eval(self, state):
-        assert type(state) == np.ndarray, type(state)
-        state = self.FULL(state)
-        r, = self.sess.run(
-            [self.model],
-            feed_dict={self.state: state})
-        return r
-
     def getparm(self):
         return [(p.name, val) for p, val in
                 zip(self.parms, self.sess.run(self.parms))]
-
-    def subreplay(self):
-        r = 0
-        # for sa in self.SARs[self.i0:][::-1]:
-        #     sa.score += r * self.gamma
-        #     r = sa.score
-            # if r:
-            #     set_trace()
-
-    def replay(self):
-        self.subreplay()
-        if self.nolearn:
-            return
-        N = len(self.SARs)
-        if (N < N_REPSIZE) or (self.nolearn):
-            return None
-
-        idx = np.random.permutation(range(N))
-        for t in xrange(0, N_REPSIZE, N_BATCH):
-            SARs = SARli([self.SARs[i] for i in idx[t:(t+N_BATCH)]])
-            if len(SARs) != N_BATCH:
-                continue
-            assert len(SARs) == N_BATCH, (t, map(len, (SARs, self.SARs)))
-            loss_res, merge_res = self._update(SARs)
-            if t and (t % 100 == 0):
-                self.writer_sum.add_summary(
-                    merge_res, self.tickcnt)
-                self.tickcnt += 1
-        return loss_res
 
     def reset(self):
         self.score = 0
@@ -310,7 +273,7 @@ class NNQ(Model):
 
     def FULL(self, s0):
         n = N_BATCH - s0.shape[0]
-        return np.vstack([s0, self.zeros(n)])
+        return np.vstack([s0, zeros(n)])
 
     def encState(self, state, noadd=False):
         s1 = []
@@ -320,31 +283,49 @@ class NNQ(Model):
         assert len(s1) == 16
         return encState(s1)
 
+    def loss_def(self, acts, r, gamma):
+        Qsa = fgetidx(self.model, self.acts)
+        self.loss = r + gamma * maxQ(self.Qhat) - Qsa
+        self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
 
-def ANN(N_BATCH):
-    zeros = lambda x: np.zeros((x, 4, 4, 4))
-    new_shape = (N_BATCH, 4, 4, 4)
-    state = tf.placeholder(tf.float32, shape=new_shape)
-    normfun = lambda size: tf.truncated_normal(size, stddev=0.1, seed=SEED)
+    def optimize(self, sess, state, acts, r, state1, summary=None):
+        varlist = [self.loss, self.op]
+        if summary is not None:
+            varlist.append(summary)
 
-    model = relu(add_fullcon(state, 256))
-    model = relu(add_fullcon(model, 64))
-    model = relu(add_fullcon(model, 16))
-    model = relu(add_fullcon(model, 4))
-    return locals()
+        ret = sess.run(
+            varlist,
+            feed_dict={
+                self.state: s0,
+                self.acts: acts,
+                self.r: r,
+                self.s1: s1
+                })
+
+        if summary is not None:
+            return ret[0], ret[2]
+        else:
+            return ret[0]
 
 
-def CNN(N_BATCH):
-    zeros = lambda x: np.zeros((x, 4, 4, 4))
-    new_shape = (N_BATCH, 4, 4, 4)
-    state = tf.placeholder(tf.float32, shape=new_shape)
-    normfun = lambda size: tf.truncated_normal(size, stddev=0.1, seed=SEED)
+def ANN(state, layer='', reuse=None):
+    with tf.variable_scope(layer, reuse=reuse):
+        model = relu(full_layer(state, 256), layer='layer1', reuse=reuse)
+        model = relu(full_layer(model, 64), layer='layer2', reuse=reuse)
+        model = relu(full_layer(model, 16), layer='layer3', reuse=reuse)
+        model = relu(full_layer(model, 4), layer='layer4', reuse=reuse)
+    return model
 
-    model = relu(add_conv(state, [2, 2], 16, 1))
-    model = relu(add_conv(model, [2, 2], 32, 1))
-    model = relu(add_fullcon(model, 256))
-    model = relu(add_fullcon(model, 4))
-    return locals()
+
+def CNN(state, layer='', reuse=None):
+    with tf.variable_scope(layer, reuse=reuse):
+        model = relu(conv_layer(
+            state, [2, 2], 16, 1, layer='layer1', reuse=reuse))
+        model = relu(conv_layer(
+            model, [2, 2], 32, 1, layer='layer2', reuse=reuse))
+        model = relu(full_layer(model, 256, layer='layer3', reuse=reuse))
+        model = relu(full_layer(model, 4, layer='layer4', reuse=reuse))
+    return model
 
 
 def getidx(mat, acts):
@@ -360,26 +341,113 @@ def getidx(mat, acts):
 fgetidx = tf.make_template('getidx', getidx)
 
 
-def maxR(fQ, state1):
-    assert isinstance(state1, tf.python.framework.ops.Tensor)
-    R1_mat = fQ(state1)
-    R1_max = tf.reduce_max(R1_mat, reduction_indices=[1])
-    size0 = getshape(R1_max)
-    size1 = [size0[0], 1]
-    return tf.reshape(R1_max, size1)
+def maxQ(Q):
+    Q_max = tf.reduce_max(Q, reduction_indices=[1])
+    size0 = getshape(Q_max)
+    return tf.reshape(Q_max, [size0[0], 1])
 
 
-def Target_LossFunc(obj, s0, acts, r, s1):
+class ExpReplay(object):
+    def __init__(self, obj, shuffle=False):
+        self.loss = obj.loss
+        self.op = obj.op
+
+    def optimize(self, sess, state, acts, r, state1, summary=None):
+        varlist = [self.loss, self.op]
+        if summary is not None:
+            varlist.append(summary)
+
+        ret = sess.run(
+            varlist,
+            feed_dict={
+                self.state: s0,
+                self.acts: acts,
+                self.r: r,
+                self.s1: s1
+                })
+
+        if summary is not None:
+            return ret[0], ret[2]
+        else:
+            return ret[0]
+
+    def getli(self, SARs_raw):
+        idx = np.random.permutation(range(N))
+        for t in xrange(0, N_REPSIZE, N_BATCH):
+            SARs = [SARs_raw[i] for i in idx[t:(t+N_BATCH)]]
+            if len(SARs) != N_BATCH:
+                continue
+            assert len(SARs) == N_BATCH, (t, map(len, (SARs, self.SARs)))
+            yield SARli(SARs)
+
+
+class TargetNetwork(object):
     """
     - Use old weight to calculate:
-        R1(r, gamma, s1, Q) = r + gamma * max_a Q(s1, a)
+        Q0(r, gamma, s1, Q_0) = r + gamma * max_a Q_0(s1, a)
     - Loss Tensor:
-        Loss(R1, s0, acts, Q) = mean(sqrt(R1 - Q(s0, acts)))
+        Loss(Q0, s0, acts, Q) = mean(sqrt(Q0 - Q(s0, acts)))
     - Minimize Loss:
-        Optim(R1, s0, acts, Q) = tf.train.AnyOptimizer(Loss)
+        Optim(Q0, s0, acts, Q) = tf.train.AnyOptimizer(Loss)
     """
-    R1 = maxR(obj.fQ, s1)
-    target = r + obj.gamma * R1_max
+    def __init__(self, obj, enable=False):
+        self.state = obj.state
+        self.acts = obj.acts
+        self.r = obj.r
+        self.enable = enable
+
+        # initialize another NN structure
+        self.model_old = obj.model_init(self.state, 'model0')
+        self.assigns = setAssign(obj.model, self.model_old)
+        self.firstRun = False
+
+        nrow, ncol = getshape(self.model_old)
+        self.Qval_old = tf.placeholder(
+            self.model_old.dtype,
+            shape=[nrow, 1],
+            )
+        self.Qhat_old = self.r + obj.gamma * maxQ(self.model_old)
+        Qsa = fgetidx(obj.model, self.acts)
+        self.loss = tf.reduce_mean(
+            tf.square(self.Qval_old - Qsa)
+            )
+        self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
+
+    def optimize(self, sess, state, acts, r, state1, summary=None):
+        if not self.enable:
+            return
+
+        if not self.firstRun:
+            sess.run(self.assigns)
+            self.firstRun = True
+            return
+
+        Qhat = sess.run(
+            self.Qhat_old,
+            feed_dict={
+                self.r: r,
+                self.state: state1,
+                })
+
+        varlist = [self.loss, self.op]
+        if summary is not None:
+            varlist.append(summary)
+
+        ret = sess.run(
+            varlist,
+            feed_dict={
+                self.Qval_old: Qhat,
+                self.state: state,
+                self.acts: acts,
+                }
+            )
+
+        sess.run(self.assigns)
+
+        if summary is not None:
+            return ret[0], ret[2]
+        else:
+            return ret[0]
 
 
 def ExpReplay_LossFunc(model):
@@ -392,7 +460,7 @@ def ExpReplay_LossFunc(model):
     """
 
 
-def RL_LossFunc(parms, model, acts, Q):
+def RL_LossFunc(model, acts):
     sret = fgetidx(model, acts)
     tret = fgetidx(Q, acts)
     loss = tf.reduce_mean(tf.square(
@@ -407,7 +475,7 @@ def RL_LossFunc(parms, model, acts, Q):
 def NFQ(**kwargs):
     saveflag = True
     agent = NNQ(**kwargs)
-    agent.load()
+    # agent.load()
     agent.listparm()
 
     SARs = agent.SARs
@@ -445,7 +513,7 @@ def NFQ(**kwargs):
             assert sa.state1 is not None, t
 
         if i % 5 == 0:
-            loss = agent.replay()
+            loss = agent._update()
             if loss is not None:
                 print i, np.mean(loss), len(SARs)
         agent.reset()
@@ -454,6 +522,17 @@ def NFQ(**kwargs):
     # print i, np.mean(loss), len(SARs)
     if saveflag:
         agent.save()
+
+
+def test():
+    tf.reset_default_graph()
+    state = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
+    acts = tf.placeholder(tf.int32, shape=[N_BATCH])
+    r = tf.placeholder(tf.float32, shape=[N_BATCH, 1])
+    state1 = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
+    model = relu(conv_layer(state, [2, 2], 16, 1))
+    model = relu(conv_layer(model, [2, 2], 32, 1))
+    globals().update(locals())
 
 
 if __name__ == "__main__":

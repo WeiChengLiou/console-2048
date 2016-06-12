@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import numpy as np
-from pdb import set_trace
 
 
 class State(object):
@@ -29,6 +28,7 @@ class StateAct(object):
             return self.score
 
 
+zeros = lambda x: np.zeros((x, 4, 4, 4))
 vfunc = np.vectorize(lambda x, y: np.log2(max(x, y)))
 
 
@@ -50,3 +50,5 @@ def chkEmpty(s1, i):
 
 def encReward(r):
     return vfunc(r, 1)
+
+
