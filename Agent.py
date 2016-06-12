@@ -127,15 +127,16 @@ class NNQ(Model):
         self.sess = tf.Session()
         self.sess.run(init)
         self.writer_sum = tf.train.SummaryWriter(
-            'tmp/logs', self.sess.graph)
+            'tmp/%s' % kwargs['logdir'],
+            self.sess.graph)
         self.tickcnt = 0
 
-        if not self.nolearn:
-            self.saveobj = savedata.SaveObj(
-                self.algo + '.h5',
-                [(p.name, p.get_shape().as_list()) for p in self.parms],
-                times=self.nRun,
-                )
+        # if not self.nolearn:
+        #     self.saveobj = savedata.SaveObj(
+        #         self.algo + '.h5',
+        #         [(p.name, p.get_shape().as_list()) for p in self.parms],
+        #         times=self.nRun,
+        #         )
 
     def show(self):
         for i in range(len(self.SARs)):
@@ -258,7 +259,7 @@ class NNQ(Model):
     def save(self):
         if self.nolearn:
             return
-        self.saveobj.save(self.getparm())
+        # self.saveobj.save(self.getparm())
         self.saver.save(
             self.sess,
             'tmp/%s%s.ckpt' % (self.algo, self.kw)
@@ -372,8 +373,9 @@ class ExpReplay(object):
             return ret[0]
 
     def getli(self, SARs_raw):
+        N = len(SARs_raw)
         idx = np.random.permutation(range(N))
-        for t in xrange(0, N_REPSIZE, N_BATCH):
+        for t in xrange(0, N, N_BATCH):
             SARs = [SARs_raw[i] for i in idx[t:(t+N_BATCH)]]
             if len(SARs) != N_BATCH:
                 continue
