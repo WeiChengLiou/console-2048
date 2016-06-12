@@ -297,10 +297,10 @@ class NNQ(Model):
         ret = sess.run(
             varlist,
             feed_dict={
-                self.state: s0,
+                self.state: state,
                 self.acts: acts,
                 self.r: r,
-                self.s1: s1
+                self.s1: state1,
                 })
 
         if summary is not None:
