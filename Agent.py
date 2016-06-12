@@ -300,7 +300,7 @@ class NNQ(Model):
                 self.state: state,
                 self.acts: acts,
                 self.r: r,
-                self.s1: state1,
+                self.state1: state1,
                 })
 
         if summary is not None:
