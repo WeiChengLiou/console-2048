@@ -450,28 +450,6 @@ class TargetNetwork(object):
             return ret[0]
 
 
-def ExpReplay_LossFunc(model):
-    """
-    - Define Loss:
-        Loss(r, gamma, s1, s0, acts, Q) =
-            mean(sqrt(r + gamma * max_a Q(s1, a) - Q(s0, acts)))
-    - Minimize Loss:
-        Optim(r, gamma, s1, s0, acts, Q) = tf.train.AnyOptimizer(Loss)
-    """
-
-
-def RL_LossFunc(model, acts):
-    sret = fgetidx(model, acts)
-    tret = fgetidx(Q, acts)
-    loss = tf.reduce_mean(tf.square(
-        tf.sub(sret, tret)
-        ))
-    regularizer = sum(map(tf.nn.l2_loss, parms))
-    loss += 1e-4 * regularizer
-    optim_op = tf.train.AdamOptimizer(1e-2).minimize(loss)
-    return loss, optim_op
-
-
 def NFQ(**kwargs):
     saveflag = True
     agent = NNQ(**kwargs)
