@@ -88,7 +88,12 @@ def full_layer(inpt, ndim, layer='', reuse=None):
 
 
 def getshape(x):
-    return x.get_shape().as_list()
+    if isinstance(x, tf.Tensor) or isinstance(x, tf.Variable):
+        return x.get_shape().as_list()
+    elif x.type == 'Placeholder':
+        return [s.size for s in x.get_attr('shape').dim]
+    else:
+        raise Exception('Unknown type')
 
 
 def listVar(tensor, namescope=None, coll_key='trainable_variables'):
@@ -101,6 +106,12 @@ def listVar(tensor, namescope=None, coll_key='trainable_variables'):
         if rets:
             li.append(v)
     return li
+
+
+def listPlaceholder(tensor):
+    for v in tensor.graph.get_operations():
+        if v.type == 'Placeholder':
+            yield v
 
 
 def getscope(tensor):
@@ -188,6 +199,9 @@ def test():
             state2: x1,
             })
     print (r1.sum() == r2.sum()), (r1.sum(), r2.sum())
+
+    for v in listPlaceHolder(model):
+        print v.name, getshape(v)
     globals().update(locals())
 
 

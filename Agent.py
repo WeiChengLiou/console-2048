@@ -91,10 +91,11 @@ class NNQ(Model):
         self.score = 0
         self.i0 = 0
 
-        self.state = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
-        self.acts = tf.placeholder(tf.int32, shape=[N_BATCH])
-        self.r = tf.placeholder(tf.float32, shape=[N_BATCH, 1])
-        self.state1 = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
+        with tf.variable_scope('original'):
+            self.state = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4), name='state')
+            self.acts = tf.placeholder(tf.int32, shape=[N_BATCH], name='acts')
+            self.r = tf.placeholder(tf.float32, shape=[N_BATCH, 1], name='r')
+            self.state1 = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4), name='state1')
 
         self.model_init = eval(algo)
         self.model = self.model_init(self.state, 'model', reuse=None)
@@ -116,8 +117,6 @@ class NNQ(Model):
         self.saver = tf.train.Saver(self.parms)
 
         tf.scalar_summary('loss', self.loss)
-        tf.scalar_summary(
-            'Target.loss', self.TargetNetwork_opt.loss)
         self.summary = tf.merge_all_summaries()
 
         # Before starting, initialize the variables.  We will 'run' this first.
@@ -285,23 +284,31 @@ class NNQ(Model):
         return encState(s1)
 
     def loss_def(self, acts, r, gamma):
-        Qsa = fgetidx(self.model, self.acts)
-        self.loss = r + gamma * maxQ(self.Qhat) - Qsa
-        self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
+        with tf.variable_scope('original'):
+            Qsa = fgetidx(self.model, self.acts)
+            loss = r + gamma * maxQ(self.Qhat) - Qsa
+            self.loss = tf.reduce_mean(tf.square(loss))
+            self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
 
     def optimize(self, sess, state, acts, r, state1, summary=None):
         varlist = [self.loss, self.op]
         if summary is not None:
             varlist.append(summary)
+        feed_dict = {
+            self.state: state,
+            self.acts: acts,
+            self.r: r,
+            self.state1: state1,
+            }
 
-        ret = sess.run(
-            varlist,
-            feed_dict={
-                self.state: state,
-                self.acts: acts,
-                self.r: r,
-                self.state1: state1,
-                })
+        try:
+            ret = sess.run(
+                varlist,
+                feed_dict=feed_dict
+                )
+        except:
+            print_exc()
+            set_trace()
 
         if summary is not None:
             return ret[0], ret[2]
@@ -350,31 +357,14 @@ def maxQ(Q):
 
 class ExpReplay(object):
     def __init__(self, obj, shuffle=False):
-        self.loss = obj.loss
-        self.op = obj.op
-
-    def optimize(self, sess, state, acts, r, state1, summary=None):
-        varlist = [self.loss, self.op]
-        if summary is not None:
-            varlist.append(summary)
-
-        ret = sess.run(
-            varlist,
-            feed_dict={
-                self.state: s0,
-                self.acts: acts,
-                self.r: r,
-                self.s1: s1
-                })
-
-        if summary is not None:
-            return ret[0], ret[2]
-        else:
-            return ret[0]
+        self.shuffle = shuffle
 
     def getli(self, SARs_raw):
         N = len(SARs_raw)
-        idx = np.random.permutation(range(N))
+        if self.shuffle:
+            idx = np.random.permutation(range(N))
+        else:
+            idx = range(N)
         for t in xrange(0, N, N_BATCH):
             SARs = [SARs_raw[i] for i in idx[t:(t+N_BATCH)]]
             if len(SARs) != N_BATCH:
@@ -396,24 +386,27 @@ class TargetNetwork(object):
         self.state = obj.state
         self.acts = obj.acts
         self.r = obj.r
+        self.state1 = obj.state1
         self.enable = enable
 
         # initialize another NN structure
-        self.model_old = obj.model_init(self.state, 'model0')
+        self.model_old = obj.model_init(self.state1, 'model0')
         self.assigns = setAssign(obj.model, self.model_old)
         self.firstRun = False
 
-        nrow, ncol = getshape(self.model_old)
-        self.Qval_old = tf.placeholder(
-            self.model_old.dtype,
-            shape=[nrow, 1],
-            )
-        self.Qhat_old = self.r + obj.gamma * maxQ(self.model_old)
-        Qsa = fgetidx(obj.model, self.acts)
-        self.loss = tf.reduce_mean(
-            tf.square(self.Qval_old - Qsa)
-            )
-        self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
+        with tf.variable_scope('new'):
+            nrow, ncol = getshape(self.model_old)
+            self.Qval_old = tf.placeholder(
+                self.model_old.dtype,
+                shape=[nrow, 1],
+                name='Qval',
+                )
+            self.Qhat_old = self.r + obj.gamma * maxQ(self.model_old)
+            Qsa = fgetidx(obj.model, self.acts)
+            self.loss = tf.reduce_mean(
+                tf.square(self.Qval_old - Qsa)
+                )
+            self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
 
     def optimize(self, sess, state, acts, r, state1, summary=None):
         if not self.enable:
@@ -428,12 +421,10 @@ class TargetNetwork(object):
             self.Qhat_old,
             feed_dict={
                 self.r: r,
-                self.state: state1,
+                self.state1: state1,
                 })
 
         varlist = [self.loss, self.op]
-        if summary is not None:
-            varlist.append(summary)
 
         ret = sess.run(
             varlist,
@@ -446,10 +437,7 @@ class TargetNetwork(object):
 
         sess.run(self.assigns)
 
-        if summary is not None:
-            return ret[0], ret[2]
-        else:
-            return ret[0]
+        return ret[0], None
 
 
 def NFQ(**kwargs):
