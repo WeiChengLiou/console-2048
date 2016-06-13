@@ -181,7 +181,7 @@ class NNQ(Model):
             print_exc()
             set_trace()
 
-    def _update(self, Target=False):
+    def _update(self, Target=False, nlim=None):
         if self.nolearn:
             return
         N = len(self.SARs)
@@ -189,7 +189,10 @@ class NNQ(Model):
             return None
 
         iter1 = self.ExpReplay_opt.getli(self.SARs)
-        # SARs = it.islice(iter1, 1)
+        if nlim:
+            iter1 = it.islice(iter1, nlim)
+
+        li = []
         for t, SARs in enumerate(iter1):
             S = SARs.state()
             A = SARs.act().ravel()
@@ -198,16 +201,26 @@ class NNQ(Model):
 
             parms = self.sess, S, A, R, S1, self.summary
             if Target:
-                ret = self.TargetNetwork_opt.optimize(parms)
+                ret = self.TargetNetwork_opt.optimize(*parms)
             else:
                 ret = self.optimize(*parms)
 
             if ret is not None:
                 loss_res, merge_res = ret
+                if loss_res:
+                    li.append(loss_res)
+
                 if t and (t % 100 == 0):
-                    self.writer_sum.add_summary(
-                        merge_res, self.tickcnt)
                     self.tickcnt += 1
+                    if merge_res is not None:
+                        self.writer_sum.add_summary(
+                            merge_res, self.tickcnt)
+                    if self.tickcnt % 10 == 0:
+                        self._update(Target=True)
+        if len(li) == 0:
+            return None
+        else:
+            return np.mean(li)
 
     def predict(self, state):
         # state = encState(state)
@@ -318,10 +331,10 @@ class NNQ(Model):
 
 def ANN(state, layer='', reuse=None):
     with tf.variable_scope(layer, reuse=reuse):
-        model = relu(full_layer(state, 256), layer='layer1', reuse=reuse)
-        model = relu(full_layer(model, 64), layer='layer2', reuse=reuse)
-        model = relu(full_layer(model, 16), layer='layer3', reuse=reuse)
-        model = relu(full_layer(model, 4), layer='layer4', reuse=reuse)
+        # model = relu(full_layer(state, 256, layer='layer1', reuse=reuse))
+        model = relu(full_layer(state, 64, layer='layer1', reuse=reuse))
+        model = relu(full_layer(model, 16, layer='layer2', reuse=reuse))
+        model = relu(full_layer(model, 4, layer='layer3', reuse=reuse))
     return model
 
 
@@ -453,6 +466,7 @@ def NFQ(**kwargs):
     ALL = range(nlim)
     flag = train
     gets = lambda rs: list(it.chain.from_iterable([r[0] for r in rs]))
+    li = []
 
     for i, fi in enumerate(os.listdir('data')):
         if i not in flag:
@@ -483,7 +497,9 @@ def NFQ(**kwargs):
         if i % 5 == 0:
             loss = agent._update()
             if loss is not None:
-                print i, np.mean(loss), len(SARs)
+                print i, np.mean(loss)
+                li.append(np.mean(loss))
+                np.savez(open('%s.npz' % kwargs['kw'], 'wb'), li)
         agent.reset()
 
     # loss = agent.replay()
