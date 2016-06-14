@@ -29,16 +29,14 @@ class StateAct(object):
 
 
 zeros = lambda x: np.zeros((x, 4, 4, 4))
-vfunc = np.vectorize(lambda x, y: np.log2(max(x, y)))
 
 
 def encState(state):
-    """ encode original state as [1, frame, row, col]"""
+    """ encode original state as [1, row, col]"""
     for i in range(4):
         assert len(state[i]) == 4
     s1 = np.array(state).astype(np.float)
-    s1 = vfunc(s1, 1)
-    return s1.reshape((1, 4, 4, 4))
+    return np.log2(s1 + 1).reshape((1, 4, 4))
 
 
 def chkEmpty(s1, i):
@@ -49,6 +47,4 @@ def chkEmpty(s1, i):
 
 
 def encReward(r):
-    return vfunc(r, 1)
-
-
+    return np.log2(r + 1)

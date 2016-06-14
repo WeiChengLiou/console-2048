@@ -15,6 +15,7 @@ from utils import chkEmpty, StateAct, encState, encReward, zeros
 import savedata
 from operator import mul
 from abc import types
+from StateAct import SARli
 SEED = 34654
 N_BATCH = 100
 N_REPSIZE = 500
@@ -28,18 +29,18 @@ def rndAction(state):
         set_trace()
 
 
-class SARli(types.ListType):
-    def state(self):
-        return np.vstack([x.state for x in self])
-
-    def act(self):
-        return np.vstack([x.act for x in self])
-
-    def r(self):
-        return np.vstack([x.r() for x in self])
-
-    def state1(self):
-        return np.vstack([x.state1 for x in self])
+# class SARli(types.ListType):
+#     def state(self):
+#         return np.vstack([x.state for x in self])
+# 
+#     def act(self):
+#         return np.vstack([x.act for x in self])
+# 
+#     def r(self):
+#         return np.vstack([x.r() for x in self])
+# 
+#     def state1(self):
+#         return np.vstack([x.state1 for x in self])
 
 
 class Model(object):
@@ -66,10 +67,13 @@ class Random(Model):
     def predict(self, state):
         return rndAction(state)
 
-    def update(self, s1, r):
+    def update(self, *args):
         return self
 
     def reset(self):
+        """"""
+
+    def save(self):
         """"""
 
 
@@ -130,14 +134,8 @@ class NNQ(Model):
             self.sess.graph)
         self.tickcnt = 0
 
-        # if not self.nolearn:
-        #     self.saveobj = savedata.SaveObj(
-        #         self.algo + '.h5',
-        #         [(p.name, p.get_shape().as_list()) for p in self.parms],
-        #         times=self.nRun,
-        #         )
-
     def show(self):
+        print 'Maybe deprecated'
         for i in range(len(self.SARs)):
             print i, self.SARs[i].score
 
@@ -152,34 +150,14 @@ class NNQ(Model):
     def setgame(self, game):
         self.records = game.records
 
-    def update(self, state1, r0):
+    def update(self, t, state, act, r, terminal):
         # receive state class
-        if (len(self.records) <= 3):
-            return self
+        if self.nolearn:
+            return
 
-        if self.SARs and (not self.nolearn):
-            if not self.trainNFQ:
-                state1 = self.encState(state1)
-            s0 = self.SARs[-1]
-            if (s0.state1 is None) or self.trainNFQ:
-                s0.state1 = state1
-                s0.score = encReward(r0)
+        state = encState(state)
+        self.SARs.update(t, state, act, r, terminal)
         return self
-
-    def booking(self, state, act):
-        try:
-            if self.SARs:
-                num0 = hash(tuple(state.ravel()))
-                num1 = hash(tuple(self.SARs[-1].state.ravel()))
-                if num0 == num1:
-                    s0 = self.SARs[-1]
-                    s0.act = act
-                    return
-            assert isinstance(state, np.ndarray)
-            self.SARs.append(StateAct(state, act, None))
-        except:
-            print_exc()
-            set_trace()
 
     def _update(self, Target=False, nlim=None):
         if self.nolearn:
@@ -215,7 +193,7 @@ class NNQ(Model):
                     if merge_res is not None:
                         self.writer_sum.add_summary(
                             merge_res, self.tickcnt)
-                    if self.tickcnt % 10 == 0:
+                    if (self.tickcnt % 10 == 0) and (not Target):
                         self._update(Target=True)
         if len(li) == 0:
             return None
@@ -233,8 +211,6 @@ class NNQ(Model):
             act = rndAction(state)
         else:
             act = self._action(state)
-        if not self.trainNFQ:
-            self.booking(state, act)
         return act
 
     def _action(self, state):
@@ -250,7 +226,7 @@ class NNQ(Model):
             [self.model],
             feed_dict={self.state: state})
 
-        for i in np.argsort(rewards[0, :].ravel())[::-1]:
+        for i in np.argsort(r[0, :].ravel())[::-1]:
             act = i
             break
         assert act != -1
@@ -281,6 +257,7 @@ class NNQ(Model):
     def load(self):
         fi = 'tmp/%s%s.ckpt' % (self.algo, self.kw)
         if os.path.exists(fi):
+            print 'Load parameters'
             self.saver.restore(self.sess, fi)
         return self
 
@@ -459,7 +436,6 @@ def NFQ(**kwargs):
     # agent.load()
     agent.listparm()
 
-    SARs = agent.SARs
     nlim = 20000
     train = range(188)
     test = range(188, 363)
@@ -473,26 +449,14 @@ def NFQ(**kwargs):
             continue
         fi = 'data/%s' % fi
         rets = np.load(fi)['arr_0']
-        agent.records = []
-        rec = agent.records
-        jend = len(rets) - 1
 
         for j, ret in enumerate(rets):
             # print j, ret[2]
-            rec.append(ret)
             if len(rec) >= 5:
                 r = ret[2]
                 if r >= 0:
                     r += 2
-                s1 = agent.encState(gets(rec[-4:]), noadd=True)
-                agent.update(s1, r)
-            if (len(rec) >= 4) and (j != jend):
-                s0 = agent.encState(gets(rec[-4:]), noadd=True)
-                act = ret[1]
-                agent.booking(s0, act)
-
-        for t, sa in enumerate(agent.SARs):
-            assert sa.state1 is not None, t
+                agent.update(*ret)
 
         if i % 5 == 0:
             loss = agent._update()

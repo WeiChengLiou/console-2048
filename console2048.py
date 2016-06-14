@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import cPickle, gzip
 from datetime import datetime
 from pdb import set_trace
 import yaml
@@ -74,7 +75,7 @@ class Manual(Model):
     def predict(self, state):
         return keypad.index(getch("Enter direction (w/a/s/d): "))
 
-    def update(self, s1, r):
+    def update(self, *args):
         return self
 
     def reset(self):
@@ -218,31 +219,32 @@ class Game:
         self.end = False
         self.records = []
         self.agent = kwargs['agent']
-        self.agent.setgame(self)
+        if isinstance(self.agent, NNQ):
+            self.agent.setgame(self)
         self.saveflag = kwargs.get('savegame', False)
 
     def move(self, direction):
         grid_copy = copy.deepcopy(self.grid)
         r = self.moves[direction](self.grid)
-        self.booking(grid_copy, direction, r)
 
         if self.grid == grid_copy:
-            return 0
+            return
 
         self.nturn += 1
         self.reward = r
         self.grid0 = grid_copy
+        self.act = direction
         if np.max(self.grid) >= 1024:  # Success when 1024 appears
+            self.reward += 1024
             self.score += self.reward
             self.end = True
-            return 1024
+            return
 
         if prepare_next_turn(self.grid):
             self.score += self.reward
-            return self.reward
-
-        self.end = True
-        return -1024  # Loss when game failed
+        else:
+            self.end = True
+            self.reward -= 1024  # Loss when game failed
 
     def display(self, noshow=True):
         if noshow:
@@ -252,25 +254,20 @@ class Game:
     def action(self):
         return keypad[self.agent.predict(self.grid)]
 
-    def update(self, r):
-        r += (bool(not self.end) * 2)  # add reward when game continues
-        self.reward = r
-        self.agent.update(self.grid, r)
+    def update(self):
+        self.records.append(
+            (self.nturn, self.grid0, self.act, self.reward, self.end))
+        self.agent.update(
+            self.nturn, self.grid0, self.act, self.reward, self.end)
 
     def reset(self):
         self.records = []
         self.agent.reset()
 
-    def booking(self, state, act, r):
-        self.records.append((state, act, r))
-
-    def savegame(self, r):
-        s0 = self.records[-1]
-        self.records[-1] = (s0[0], s0[1], r)
+    def savegame(self):
         if self.saveflag:
-            np.savez_compressed(
-                datetime.now().strftime('data/game.%Y%m%d%H%M%S.npz'),
-                self.records)
+            fi = 'data/game.%d.pkl.gz' % (len(os.listdir('data')))
+            cPickle.dump(self.records, gzip.open(fi, 'wb'))
 
 
 def initAgent(**kwargs):
@@ -279,7 +276,10 @@ def initAgent(**kwargs):
     if agent == 'random':
         return Random()
     elif agent == 'neural':
-        return NNQ(**kwargs)
+        instance = NNQ(**kwargs)
+        if kwargs.get('load'):
+            instance.load()
+        return instance
     else:
         return Manual()
 
@@ -302,15 +302,15 @@ def main(**kwargs):
             # get_input = getch("Enter direction (w/a/s/d): ")
             get_input = game.action()
             if get_input in keypad:
-                r = game.move(keypad.index(get_input))
-                game.update(r)
+                game.move(keypad.index(get_input))
+                game.update()
             # elif get_input == "q":
             #     break
             # else:
             #     print("\nInvalid choice.")
             #     continue
             if game.end:
-                game.savegame(r)
+                game.savegame()
                 game.display(kwargs['noshow'])
                 print("Result:", game.nturn, game.score)
                 break
