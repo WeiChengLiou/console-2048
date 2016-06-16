@@ -1,5 +1,5 @@
 from __future__ import print_function
-
+from traceback import print_exc
 import cPickle, gzip
 from datetime import datetime
 from pdb import set_trace
@@ -219,6 +219,7 @@ class Game:
         self.end = False
         self.records = []
         self.agent = kwargs['agent']
+        self.grid0 = None
         if isinstance(self.agent, NNQ):
             self.agent.setgame(self)
         self.saveflag = kwargs.get('savegame', False)
@@ -255,10 +256,16 @@ class Game:
         return keypad[self.agent.predict(self.grid)]
 
     def update(self):
-        self.records.append(
-            (self.nturn, self.grid0, self.act, self.reward, self.end))
-        self.agent.update(
-            self.nturn, self.grid0, self.act, self.reward, self.end)
+        if self.grid0 is None:
+            return
+        try:
+            self.records.append(
+                (self.nturn, self.grid0, self.act, self.reward, self.end))
+            self.agent.update(
+                self.nturn, self.grid0, self.act, self.reward, self.end)
+        except:
+            print_exc()
+            set_trace()
 
     def reset(self):
         self.records = []
@@ -266,7 +273,7 @@ class Game:
 
     def savegame(self):
         if self.saveflag:
-            fi = 'data/game.%d.pkl.gz' % (len(os.listdir('data')))
+            fi = 'data/game.%04d.pkl.gz' % (len(os.listdir('data')))
             cPickle.dump(self.records, gzip.open(fi, 'wb'))
 
 

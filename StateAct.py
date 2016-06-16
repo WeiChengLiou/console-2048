@@ -3,49 +3,110 @@
 import numpy as np
 import itertools as it
 from pdb import set_trace
+from abc import types
+from collections import namedtuple
+from traceback import print_exc
+SAR = namedtuple('SAR', ['state', 'act', 'r', 'terminal'])
+s_zero = lambda: np.zeros((1, 4, 4), dtype=np.float32)
 
 
-class SARli(object):
-    def __init__(self):
-        self.states = []
-        self.acts = []
-        self.rs = []
-        self.terminals = []
-        self.idx = -1
-        self.game_t = -1
+class SARli(types.ListType):
+    def __init__(self, lim=100):
+        self.sars = []
+        self.idxs = []
+        self.lim = lim
 
-    def state(self, idx=None):
-        if idx is None:
-            idx = self.idx
-        assert idx <= len(self.states)
-        return self.states[idx]
+    def __len__(self):
+        if self.sars[-1].r is None:
+            return len(self.idxs)
+        else:
+            return max(0, len(self.idxs) - 1)
 
-    def act(self, idx=None):
-        if idx is None:
-            idx = self.idx
-        assert idx <= len(self.acts)
-        return self.acts[idx]
+    def hashable(self, s):
+        assert isinstance(s, np.ndarray)
+        s.flags.writeable = False
+        return s
 
-    def r(self, idx=None):
-        if idx is None:
-            idx = self.idx
-        assert idx <= len(self.rs)
-        return self.rs[idx]
+    def update(self, t, state, act, r, terminal, debug=False):
+        try:
+            if len(self.sars) == 0:
+                assert t == 0
+            state.flags.writeable = False
+            sar = SAR(state, act, r, terminal)
+            self.sars.append(sar)
+            if t >= 3:
+                self.idxs.append(len(self.sars)-1)
+                if len(self.idxs) == 1:
+                    assert len(self.sars) == 4
+            if terminal:
+                s0 = s_zero()
+                s0.flags.writeable = False
+                sar = SAR(s0, None, None, None)
+                self.sars.append(sar)
+            if len(self) > self.lim:
+                idxs = self.idxs[1:]
+                i0 = idxs[0] - 3
+                idxs = [(j-idxs[0]+3) for j in idxs]
+                sars = self.sars[i0:]
+                assert all([(sars[j].act is not None) for j in idxs])
+                self.idxs = idxs
+                self.sars = sars
+        except:
+            print_exc()
+            set_trace()
 
-    def update(self, t, state, act, r, terminal):
+    def __getstate__(self, i):
+        try:
+            return np.vstack(
+                [self.sars[j].state for j in range(i-3, i+1)]
+                ).reshape((1, 4, 4, 4))
+        except Exception as e:
+            raise Exception(e, i, len(self.sars), range(i-3, i+1))
+
+    def __getitem__(self, i):
+        if isinstance(i, list):
+            return self._getbatch_(i)
+        else:
+            return self._getbatch_([i])
+
+    def __getslice__(self, i0, i1):
+        return self.__getitem__(range(i0, i1))
+
+    def _getbatch_(self, idx):
+        try:
+            idx0 = [self.idxs[i] for i in idx]
+            idx1 = [(self.idxs[i]+1) for i in idx]
+            sars = [self.sars[i] for i in idx0]
+            state = self.hashable(np.vstack(
+                [self.__getstate__(i) for i in idx0]))
+            act = np.array([s.act for s in sars])
+            r = np.vstack([s.r for s in sars])
+            state1 = self.hashable(np.vstack(
+                [self.__getstate__(i) for i in idx1]))
+            terminal = np.array([s.terminal for s in sars])
+            assert all([(x is not None) for x in act])
+            return state, act, r, state1, terminal
+        except:
+            print_exc()
+            set_trace()
+
+    def getstate_new(self, state):
+        li = [s.state for s in self.sars[-3:]]
         state.flags.writeable = False
-        self.states.append(state)
-        self.acts.append(act)
-        self.rs.append(r)
-        self.terminals.append(terminal)
-        self.idx += 1
-        self.game_t = t
+        li.append(state)
+        return self.hashable(np.vstack(li).reshape((1, 4, 4, 4)))
 
-    def eq_np(self, x1, x2):
-        return hash(x1.data) == hash(x2.data)
+    def subset(self, i0, i1):
+        idxs = [self.idxs[i] for i in range(i0, i1)]
+        i0_ = min(idxs) - 3
+        i1_ = max(idxs) + 2
+        sars = [self.sars[x] for x in range(i0_, i1_)]
+        idxs = [(i-idxs[0]+3) for i in idxs]
+        sa = SARli()
+        sa.sars = sars
+        sa.idxs = idxs
+        return sa
 
-    def fixSA(self, t, state, act):
-        print 'fixSA maybe deprecated'
-        state.flags.writeable = False
-        assert self.eq_np(self.states[t], state), 'Update wring state'
-        self.acts[t] = act
+    def __iter__(self):
+        for i in self.idxs:
+            yield self.sars[i]

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import cPickle, gzip
 import copy
 from tftools import *
 import os
@@ -14,7 +15,6 @@ from random import random, randint
 from utils import chkEmpty, StateAct, encState, encReward, zeros
 import savedata
 from operator import mul
-from abc import types
 from StateAct import SARli
 SEED = 34654
 N_BATCH = 100
@@ -27,20 +27,6 @@ def rndAction(state):
     except:
         print_exc()
         set_trace()
-
-
-# class SARli(types.ListType):
-#     def state(self):
-#         return np.vstack([x.state for x in self])
-# 
-#     def act(self):
-#         return np.vstack([x.act for x in self])
-# 
-#     def r(self):
-#         return np.vstack([x.r() for x in self])
-# 
-#     def state1(self):
-#         return np.vstack([x.state1 for x in self])
 
 
 class Model(object):
@@ -81,31 +67,35 @@ class NNQ(Model):
     def __init__(self, **kwargs):
         algo = kwargs.get('algo', 'ANN')
         print('Use %s' % algo)
-        self.SARs = SARli()  # List of (state, action)
+        self.SARs = SARli(lim=N_REPSIZE)  # List of (state, action)
         self.alpha = kwargs.get('alpha', 0.5)
         self.gamma = kwargs.get('gamma', 0.5)  # Discount factor
         self.epsilon = kwargs.get('epsilon', 0.1)
-        self.nRun = kwargs.get('n', 100)
         self.nolearn = not kwargs.get('train', True)
         self.kw = kwargs.get('kw', '')
         self.savegame = kwargs.get('savegame', False)
         self.trainNFQ = kwargs.get('trainNFQ', False)
         self.algo = algo
-        self.RepSize = N_REPSIZE
         self.score = 0
-        self.i0 = 0
+        self.sa0 = None
 
         with tf.variable_scope('original'):
-            self.state = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4), name='state')
-            self.acts = tf.placeholder(tf.int32, shape=[N_BATCH], name='acts')
-            self.r = tf.placeholder(tf.float32, shape=[N_BATCH, 1], name='r')
-            self.state1 = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4), name='state1')
+            self.state = tf.placeholder(
+                tf.float32, shape=(N_BATCH, 4, 4, 4), name='state')
+            self.act = tf.placeholder(
+                tf.int32, shape=[N_BATCH], name='act')
+            self.r = tf.placeholder(
+                tf.float32, shape=[N_BATCH, 1], name='r')
+            self.state1 = tf.placeholder(
+                tf.float32, shape=(N_BATCH, 4, 4, 4), name='state1')
 
         self.model_init = eval(algo)
-        self.model = self.model_init(self.state, 'model', reuse=None)
-        self.Qhat = self.model_init(self.state1, 'model', reuse=True)
+        self.model = self.model_init(
+            self.state, 'model', reuse=None)
+        self.Qhat = self.model_init(
+            self.state1, 'model', reuse=True)
         self.loss_def(
-            self.acts,
+            self.act,
             self.r,
             self.gamma,
             )
@@ -156,45 +146,41 @@ class NNQ(Model):
             return
 
         state = encState(state)
-        self.SARs.update(t, state, act, r, terminal)
+        self.SARs.update(t-1, state, act, r, terminal)
         return self
 
     def _update(self, Target=False, nlim=None):
         if self.nolearn:
             return
-        N = len(self.SARs)
-        if (N < N_REPSIZE) or (self.nolearn):
+        if (len(self.SARs) < N_REPSIZE) or (self.nolearn):
             return None
 
-        iter1 = self.ExpReplay_opt.getli(self.SARs)
-        if nlim:
-            iter1 = it.islice(iter1, nlim)
+        for ii in xrange(100):
+            iter1 = self.ExpReplay_opt.getli(self.SARs)
+            if nlim:
+                iter1 = it.islice(iter1, nlim)
 
-        li = []
-        for t, SARs in enumerate(iter1):
-            S = SARs.state()
-            A = SARs.act().ravel()
-            R = SARs.r()
-            S1 = SARs.state1()
+            li = []
+            for t, (S, A, R, S1, terminals) in enumerate(iter1):
+                parms = self.sess, S, A, R, S1, self.summary
+                if Target:
+                    ret = self.TargetNetwork_opt.optimize(*parms)
+                else:
+                    ret = self.optimize(*parms)
 
-            parms = self.sess, S, A, R, S1, self.summary
-            if Target:
-                ret = self.TargetNetwork_opt.optimize(*parms)
-            else:
-                ret = self.optimize(*parms)
+                if ret is not None:
+                    loss_res, merge_res = ret
+                    if loss_res:
+                        li.append(loss_res)
 
-            if ret is not None:
-                loss_res, merge_res = ret
-                if loss_res:
-                    li.append(loss_res)
-
-                if t and (t % 100 == 0):
-                    self.tickcnt += 1
-                    if merge_res is not None:
-                        self.writer_sum.add_summary(
-                            merge_res, self.tickcnt)
-                    if (self.tickcnt % 10 == 0) and (not Target):
-                        self._update(Target=True)
+                    if t and (t % 10 == 0):
+                        self.tickcnt += 1
+                        print t, self.MSE(self.sa0)
+                        if merge_res is not None:
+                            self.writer_sum.add_summary(
+                                merge_res, self.tickcnt)
+                        if (self.tickcnt % 10 == 0) and (not Target):
+                            self._update(Target=True)
         if len(li) == 0:
             return None
         else:
@@ -206,7 +192,7 @@ class NNQ(Model):
         if (len(self.records) < 3):
             return rndAction(state)
 
-        state = self.encState(state)
+        state = self.SARs.getstate_new(self.encState(state))
         if random() < self.epsilon:
             act = rndAction(state)
         else:
@@ -238,11 +224,6 @@ class NNQ(Model):
 
     def reset(self):
         self.score = 0
-        if not self.nolearn:
-            assert self.SARs[-1].state1 is not None
-        if len(self.SARs) > self.RepSize:
-            self.SARs = self.SARs[N_BATCH:]
-        self.i0 = len(self.SARs)
 
     def save(self):
         if self.nolearn:
@@ -273,20 +254,20 @@ class NNQ(Model):
         assert len(s1) == 16
         return encState(s1)
 
-    def loss_def(self, acts, r, gamma):
+    def loss_def(self, act, r, gamma):
         with tf.variable_scope('original'):
-            Qsa = fgetidx(self.model, self.acts)
+            Qsa = fgetidx(self.model, self.act)
             loss = r + gamma * maxQ(self.Qhat) - Qsa
             self.loss = tf.reduce_mean(tf.square(loss))
             self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
 
-    def optimize(self, sess, state, acts, r, state1, summary=None):
+    def optimize(self, sess, state, act, r, state1, summary=None):
         varlist = [self.loss, self.op]
         if summary is not None:
             varlist.append(summary)
         feed_dict = {
             self.state: state,
-            self.acts: acts,
+            self.act: act,
             self.r: r,
             self.state1: state1,
             }
@@ -304,6 +285,25 @@ class NNQ(Model):
             return ret[0], ret[2]
         else:
             return ret[0]
+
+    def MSE(self, SARs):
+        def fun(i):
+            idx = range(i, i+N_BATCH)
+            if idx[-1] >= len(SARs):
+                return np.nan
+            state, act, r, state1, terminal = SARs[idx]
+            loss = self.sess.run(
+                self.loss,
+                feed_dict={
+                    self.state: state,
+                    self.act: act,
+                    self.r: r,
+                    self.state1: state1
+                    }
+                )
+            return loss
+        li = map(fun, xrange(0, len(SARs), N_BATCH))
+        return np.nanmean(li)
 
 
 def ANN(state, layer='', reuse=None):
@@ -326,12 +326,12 @@ def CNN(state, layer='', reuse=None):
     return model
 
 
-def getidx(mat, acts):
+def getidx(mat, act):
     # Get element value by index with each row
     nrow, ncol = mat.get_shape().as_list()
     mat_1d = tf.reshape(mat, [-1])
     rng = tf.constant(np.arange(nrow, dtype=np.int32) * ncol)
-    idx = tf.add(rng, acts)
+    idx = tf.add(rng, act)
     ret = tf.gather(mat_1d, idx)
     return ret
 
@@ -349,18 +349,16 @@ class ExpReplay(object):
     def __init__(self, obj, shuffle=False):
         self.shuffle = shuffle
 
-    def getli(self, SARs_raw):
-        N = len(SARs_raw)
+    def getli(self, SARs):
+        N = len(SARs)
         if self.shuffle:
-            idx = np.random.permutation(range(N))
+            idxs = np.random.permutation(range(N))
         else:
-            idx = range(N)
+            idxs = range(N)
         for t in xrange(0, N, N_BATCH):
-            SARs = [SARs_raw[i] for i in idx[t:(t+N_BATCH)]]
-            if len(SARs) != N_BATCH:
-                continue
-            assert len(SARs) == N_BATCH, (t, map(len, (SARs, self.SARs)))
-            yield SARli(SARs)
+            idx = idxs[t:(t+N_BATCH)]
+            if len(idx) == N_BATCH:
+                yield SARs[idx]
 
 
 class TargetNetwork(object):
@@ -368,13 +366,13 @@ class TargetNetwork(object):
     - Use old weight to calculate:
         Q0(r, gamma, s1, Q_0) = r + gamma * max_a Q_0(s1, a)
     - Loss Tensor:
-        Loss(Q0, s0, acts, Q) = mean(sqrt(Q0 - Q(s0, acts)))
+        Loss(Q0, s0, act, Q) = mean(sqrt(Q0 - Q(s0, act)))
     - Minimize Loss:
-        Optim(Q0, s0, acts, Q) = tf.train.AnyOptimizer(Loss)
+        Optim(Q0, s0, act, Q) = tf.train.AnyOptimizer(Loss)
     """
     def __init__(self, obj, enable=False):
         self.state = obj.state
-        self.acts = obj.acts
+        self.act = obj.act
         self.r = obj.r
         self.state1 = obj.state1
         self.enable = enable
@@ -392,13 +390,13 @@ class TargetNetwork(object):
                 name='Qval',
                 )
             self.Qhat_old = self.r + obj.gamma * maxQ(self.model_old)
-            Qsa = fgetidx(obj.model, self.acts)
+            Qsa = fgetidx(obj.model, self.act)
             self.loss = tf.reduce_mean(
                 tf.square(self.Qval_old - Qsa)
                 )
             self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
 
-    def optimize(self, sess, state, acts, r, state1, summary=None):
+    def optimize(self, sess, state, act, r, state1, summary=None):
         if not self.enable:
             return
 
@@ -421,7 +419,7 @@ class TargetNetwork(object):
             feed_dict={
                 self.Qval_old: Qhat,
                 self.state: state,
-                self.acts: acts,
+                self.act: act,
                 }
             )
 
@@ -435,35 +433,42 @@ def NFQ(**kwargs):
     agent = NNQ(**kwargs)
     # agent.load()
     agent.listparm()
+    SARs = agent.SARs
+    SARs.lim = 2000
 
     nlim = 20000
     train = range(188)
     test = range(188, 363)
     ALL = range(nlim)
     flag = train
-    gets = lambda rs: list(it.chain.from_iterable([r[0] for r in rs]))
     li = []
+    sa0 = None
 
     for i, fi in enumerate(os.listdir('data')):
         if i not in flag:
             continue
         fi = 'data/%s' % fi
-        rets = np.load(fi)['arr_0']
+        rets = cPickle.load(gzip.open(fi))
 
-        for j, ret in enumerate(rets):
-            # print j, ret[2]
-            if len(rec) >= 5:
-                r = ret[2]
-                if r >= 0:
-                    r += 2
-                agent.update(*ret)
+        for j, (t, state, act, r, terminal) in enumerate(rets):
+            if r >= 0:
+                r += 2
+            agent.update(t, state, act, r, terminal)
+            if len(SARs) >= 1001:
+                break
 
-        if i % 5 == 0:
+        if len(SARs) >= 1001:
+            if (sa0 is None) and (len(SARs) > 1000):
+                sa0 = SARs.subset(0, 1000)
+                agent.sa0 = sa0
             loss = agent._update()
+
             if loss is not None:
-                print i, np.mean(loss)
-                li.append(np.mean(loss))
+                loss_mse = agent.MSE(sa0)
+                print loss_mse
+                li.append(loss_mse)
                 np.savez(open('%s.npz' % kwargs['kw'], 'wb'), li)
+            break
         agent.reset()
 
     # loss = agent.replay()
@@ -473,14 +478,13 @@ def NFQ(**kwargs):
 
 
 def test():
-    tf.reset_default_graph()
-    state = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
-    acts = tf.placeholder(tf.int32, shape=[N_BATCH])
-    r = tf.placeholder(tf.float32, shape=[N_BATCH, 1])
-    state1 = tf.placeholder(tf.float32, shape=(N_BATCH, 4, 4, 4))
-    model = relu(conv_layer(state, [2, 2], 16, 1))
-    model = relu(conv_layer(model, [2, 2], 32, 1))
-    globals().update(locals())
+    elems = tf.Variable(np.arange(10, dtype=np.float32))
+    elems = tf.identity(elems)
+    op_sum = tf.foldl(lambda a, x: a + x, elems)
+    op_mean = tf.reduce_mean(elems)
+    with tf.Session() as sess:
+        sess.run(tf.initialize_all_variables())
+        print sess.run([op_sum, op_mean])
 
 
 if __name__ == "__main__":
@@ -492,7 +496,8 @@ if __name__ == "__main__":
     if args['config']:
         config = yaml.load(open(args['config'], 'rb'))
         args.update(config)
-    args['agent'] = args['agent'].lower()
+    if args.get('agent'):
+        args['agent'] = args['agent'].lower()
     print(args)
 
     if args.get('N_BATCH'):
