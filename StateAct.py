@@ -17,7 +17,8 @@ class SARli(types.ListType):
         self.lim = lim
 
     def __len__(self):
-        if self.sars[-1].r is None:
+        return len(self.idxs)
+        if self.sars and (self.sars[-1].r is None):
             return len(self.idxs)
         else:
             return max(0, len(self.idxs) - 1)
@@ -32,7 +33,12 @@ class SARli(types.ListType):
             if len(self.sars) == 0:
                 assert t == 0
             state.flags.writeable = False
-            sar = SAR(state, act, r, terminal)
+            sar = SAR(state, act, float(r), terminal)
+            if self.sars:
+                sa0 = self.sars[-1]
+                if hash(sar.state.data) == hash(sa0.state.data):
+                    return
+
             self.sars.append(sar)
             if t >= 3:
                 self.idxs.append(len(self.sars)-1)
@@ -57,9 +63,14 @@ class SARli(types.ListType):
 
     def __getstate__(self, i):
         try:
-            return np.vstack(
-                [self.sars[j].state for j in range(i-3, i+1)]
-                ).reshape((1, 4, 4, 4))
+            if len(self.sars) > i:
+                li = [self.sars[j].state for j in range(i-3, i+1)]
+            elif len(self.sars) == i:
+                li = [self.sars[j].state for j in range(i-3, i)]
+                li.append(s_zero())
+            else:
+                raise Exception('Index error')
+            return np.vstack(li).reshape((1, 4, 4, 4))
         except Exception as e:
             raise Exception(e, i, len(self.sars), range(i-3, i+1))
 
@@ -75,18 +86,20 @@ class SARli(types.ListType):
     def _getbatch_(self, idx):
         try:
             idx0 = [self.idxs[i] for i in idx]
-            idx1 = [(self.idxs[i]+1) for i in idx]
             sars = [self.sars[i] for i in idx0]
             state = self.hashable(np.vstack(
                 [self.__getstate__(i) for i in idx0]))
             act = np.array([s.act for s in sars])
             r = np.vstack([s.r for s in sars])
+            terminal = np.array([s.terminal for s in sars])
+
+            idx1 = [(self.idxs[i]+1) for i in idx]
             state1 = self.hashable(np.vstack(
                 [self.__getstate__(i) for i in idx1]))
-            terminal = np.array([s.terminal for s in sars])
             assert all([(x is not None) for x in act])
             return state, act, r, state1, terminal
-        except:
+        except Exception as e:
+            raise e
             print_exc()
             set_trace()
 
@@ -97,15 +110,20 @@ class SARli(types.ListType):
         return self.hashable(np.vstack(li).reshape((1, 4, 4, 4)))
 
     def subset(self, i0, i1):
-        idxs = [self.idxs[i] for i in range(i0, i1)]
-        i0_ = min(idxs) - 3
-        i1_ = max(idxs) + 2
-        sars = [self.sars[x] for x in range(i0_, i1_)]
-        idxs = [(i-idxs[0]+3) for i in idxs]
-        sa = SARli()
-        sa.sars = sars
-        sa.idxs = idxs
-        return sa
+        n = i1 - i0
+        while 1:
+            idxs = [self.idxs[i] for i in range(i0, i1)]
+            i0_ = min(idxs) - 3
+            i1_ = idxs[-1] + 1
+            sars = [self.sars[x] for x in range(i0_, i1_)]
+            idxs = [(i-idxs[0]+3) for i in idxs]
+            sa = SARli()
+            sa.sars = sars
+            sa.idxs = idxs
+            if len(sa) == n:
+                assert idxs[-1] <= len(sars), (idxs[-1], len(sars))
+                return sa
+            i1 += 1
 
     def __iter__(self):
         for i in self.idxs:

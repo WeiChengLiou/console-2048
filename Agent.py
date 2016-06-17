@@ -95,6 +95,7 @@ class NNQ(Model):
         self.Qhat = self.model_init(
             self.state1, 'model', reuse=True)
         self.loss_def(
+            self.model,
             self.act,
             self.r,
             self.gamma,
@@ -154,13 +155,14 @@ class NNQ(Model):
             return
         if (len(self.SARs) < N_REPSIZE) or (self.nolearn):
             return None
+        li = []
+        fdebug(self)
 
-        for ii in xrange(100):
+        for ii in xrange(200):
             iter1 = self.ExpReplay_opt.getli(self.SARs)
             if nlim:
                 iter1 = it.islice(iter1, nlim)
 
-            li = []
             for t, (S, A, R, S1, terminals) in enumerate(iter1):
                 parms = self.sess, S, A, R, S1, self.summary
                 if Target:
@@ -168,19 +170,28 @@ class NNQ(Model):
                 else:
                     ret = self.optimize(*parms)
 
-                if ret is not None:
-                    loss_res, merge_res = ret
-                    if loss_res:
-                        li.append(loss_res)
+                if ret is None:
+                    return
 
-                    if t and (t % 10 == 0):
-                        self.tickcnt += 1
-                        print t, self.MSE(self.sa0)
-                        if merge_res is not None:
-                            self.writer_sum.add_summary(
-                                merge_res, self.tickcnt)
-                        if (self.tickcnt % 10 == 0) and (not Target):
-                            self._update(Target=True)
+                loss_res, merge_res = ret
+
+                if t and (t % 10 == 0):
+                    self.tickcnt += 1
+                    if merge_res is not None:
+                        self.writer_sum.add_summary(
+                            merge_res, self.tickcnt)
+                    if (self.tickcnt % 10 == 0) and\
+                            (not Target) and\
+                            (self.TargetNetwork_opt.enable):
+                        self._update(Target=True)
+
+            if (ii+1) % 10 == 0:
+                loss = self.MSE(self.sa0)
+                print ii, loss
+                if li and (abs(loss - li[-1]) < 1e-5):
+                    break
+                li.append(loss)
+        fdebug(self)
         if len(li) == 0:
             return None
         else:
@@ -254,12 +265,15 @@ class NNQ(Model):
         assert len(s1) == 16
         return encState(s1)
 
-    def loss_def(self, act, r, gamma):
+    def loss_def(self, model, act, r, gamma):
         with tf.variable_scope('original'):
-            Qsa = fgetidx(self.model, self.act)
+            Qsa = tf.reshape(fgetidx(model, act), [-1, 1])
             loss = r + gamma * maxQ(self.Qhat) - Qsa
-            self.loss = tf.reduce_mean(tf.square(loss))
+            loss = tf.square(loss)
+            self.loss = tf.reduce_mean(loss)
             self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
+            self.loss_i = loss
+            self.Qsa = Qsa
 
     def optimize(self, sess, state, act, r, state1, summary=None):
         varlist = [self.loss, self.op]
@@ -308,9 +322,7 @@ class NNQ(Model):
 
 def ANN(state, layer='', reuse=None):
     with tf.variable_scope(layer, reuse=reuse):
-        # model = relu(full_layer(state, 256, layer='layer1', reuse=reuse))
-        model = relu(full_layer(state, 64, layer='layer1', reuse=reuse))
-        model = relu(full_layer(model, 16, layer='layer2', reuse=reuse))
+        model = relu(full_layer(state, 8, layer='layer2', reuse=reuse))
         model = relu(full_layer(model, 4, layer='layer3', reuse=reuse))
     return model
 
@@ -319,9 +331,11 @@ def CNN(state, layer='', reuse=None):
     with tf.variable_scope(layer, reuse=reuse):
         model = relu(conv_layer(
             state, [2, 2], 16, 1, layer='layer1', reuse=reuse))
-        model = relu(conv_layer(
-            model, [2, 2], 32, 1, layer='layer2', reuse=reuse))
-        model = relu(full_layer(model, 256, layer='layer3', reuse=reuse))
+        # model = relu(conv_layer(
+        #     model, [2, 2], 32, 1, layer='layer2', reuse=reuse))
+        # model = relu(full_layer(model, 256, layer='layer3', reuse=reuse))
+        # model = relu(full_layer(model, 64, layer='layer3', reuse=reuse))
+        model = relu(full_layer(model, 8, layer='layer3', reuse=reuse))
         model = relu(full_layer(model, 4, layer='layer4', reuse=reuse))
     return model
 
@@ -390,7 +404,7 @@ class TargetNetwork(object):
                 name='Qval',
                 )
             self.Qhat_old = self.r + obj.gamma * maxQ(self.model_old)
-            Qsa = fgetidx(obj.model, self.act)
+            Qsa = tf.reshape(fgetidx(obj.model, self.act), [-1, 1])
             self.loss = tf.reduce_mean(
                 tf.square(self.Qval_old - Qsa)
                 )
@@ -429,12 +443,11 @@ class TargetNetwork(object):
 
 
 def NFQ(**kwargs):
-    saveflag = True
+    saveflag = False
     agent = NNQ(**kwargs)
     # agent.load()
     agent.listparm()
-    SARs = agent.SARs
-    SARs.lim = 2000
+    SARs = SARli(lim=N_REPSIZE)  # List of (state, action)
 
     nlim = 20000
     train = range(188)
@@ -442,7 +455,21 @@ def NFQ(**kwargs):
     ALL = range(nlim)
     flag = train
     li = []
-    sa0 = None
+    sas = [None]
+    sa0_size = 1000
+
+    def callupdate():
+        sa0 = sas[0]
+        if SARs is not agent.SARs:
+            agent.SARs = SARs
+        if (sa0 is None) and (len(SARs) >= sa0_size):
+            sa0 = SARs.subset(0, sa0_size)
+            assert len(sa0) == sa0_size, len(sa0)
+            sas[0] = sa0
+        if (sa0 is not None) and (sa0 is not agent.sa0):
+            agent.sa0 = sa0
+        assert agent.sa0 is not None
+        agent._update()
 
     for i, fi in enumerate(os.listdir('data')):
         if i not in flag:
@@ -451,28 +478,17 @@ def NFQ(**kwargs):
         rets = cPickle.load(gzip.open(fi))
 
         for j, (t, state, act, r, terminal) in enumerate(rets):
-            if r >= 0:
-                r += 2
-            agent.update(t, state, act, r, terminal)
-            if len(SARs) >= 1001:
+            # if r >= 0:
+            #     r += 2
+            SARs.update(t-1, encState(state), act, r, terminal)
+            if len(SARs) >= N_REPSIZE:
                 break
 
-        if len(SARs) >= 1001:
-            if (sa0 is None) and (len(SARs) > 1000):
-                sa0 = SARs.subset(0, 1000)
-                agent.sa0 = sa0
-            loss = agent._update()
-
-            if loss is not None:
-                loss_mse = agent.MSE(sa0)
-                print loss_mse
-                li.append(loss_mse)
-                np.savez(open('%s.npz' % kwargs['kw'], 'wb'), li)
+        if len(SARs) >= N_REPSIZE:
             break
-        agent.reset()
 
-    # loss = agent.replay()
-    # print i, np.mean(loss), len(SARs)
+    callupdate()
+
     if saveflag:
         agent.save()
 
@@ -485,6 +501,27 @@ def test():
     with tf.Session() as sess:
         sess.run(tf.initialize_all_variables())
         print sess.run([op_sum, op_mean])
+
+
+def fdebug(self):
+    t = 0
+    for t in xrange(0, len(self.sa0), N_BATCH):
+        try:
+            S, A, R, S1, terminals = self.sa0[t:(t+N_BATCH)]
+            loss_i, loss, Qsa = self.sess.run(
+                [self.loss_i, self.loss, self.Qsa],
+                feed_dict={
+                    self.state: S,
+                    self.act: A,
+                    self.r: R,
+                    self.state1: S1,
+                    }
+                )
+            ret = np.mean(loss_i)
+            print loss, ret, np.mean(Qsa)
+        except:
+            print_exc()
+            set_trace()
 
 
 if __name__ == "__main__":
