@@ -77,7 +77,7 @@ class NNQ(Model):
         self.trainNFQ = kwargs.get('trainNFQ', False)
         self.algo = algo
         self.score = 0
-        self.sa0 = None
+        self.sa_sample = [None, None]
 
         with tf.variable_scope('original'):
             self.state = tf.placeholder(
@@ -186,8 +186,9 @@ class NNQ(Model):
                         self._update(Target=True)
 
             if (ii+1) % 10 == 0:
-                loss = self.MSE(self.sa0)
-                print ii, loss
+                loss = self.MSE(self.sa_sample[0])
+                loss1 = self.MSE(self.sa_sample[1])
+                print ii, loss, loss1
                 if li and (abs(loss - li[-1]) < 1e-5):
                     break
                 li.append(loss)
@@ -455,20 +456,21 @@ def NFQ(**kwargs):
     ALL = range(nlim)
     flag = train
     li = []
-    sas = [None]
-    sa0_size = 1000
+    sas = [None, None]
+    nsize = 100
 
     def callupdate():
         sa0 = sas[0]
         if SARs is not agent.SARs:
             agent.SARs = SARs
-        if (sa0 is None) and (len(SARs) >= sa0_size):
-            sa0 = SARs.subset(0, sa0_size)
-            assert len(sa0) == sa0_size, len(sa0)
-            sas[0] = sa0
-        if (sa0 is not None) and (sa0 is not agent.sa0):
-            agent.sa0 = sa0
-        assert agent.sa0 is not None
+        for i in range(2):
+            sa0 = sas[i]
+            if (sa0 is None) and (len(SARs) >= nsize):
+                sa0 = SARs.subset(i*nsize, (i+1)*nsize)
+                assert len(sa0) == nsize, len(sa0)
+                sas[i] = sa0
+                agent.sa_sample[i] = sa0
+        assert agent.sa_sample[0] is not None
         agent._update()
 
     for i, fi in enumerate(os.listdir('data')):
@@ -504,24 +506,28 @@ def test():
 
 
 def fdebug(self):
-    t = 0
-    for t in xrange(0, len(self.sa0), N_BATCH):
-        try:
-            S, A, R, S1, terminals = self.sa0[t:(t+N_BATCH)]
-            loss_i, loss, Qsa = self.sess.run(
-                [self.loss_i, self.loss, self.Qsa],
-                feed_dict={
-                    self.state: S,
-                    self.act: A,
-                    self.r: R,
-                    self.state1: S1,
-                    }
-                )
-            ret = np.mean(loss_i)
-            print loss, ret, np.mean(Qsa)
-        except:
-            print_exc()
-            set_trace()
+    rets = []
+    for i in range(2):
+        li = []
+        sa0 = self.sa_sample[i]
+        for t in xrange(0, len(sa0), N_BATCH):
+            try:
+                S, A, R, S1, terminals = sa0[t:(t+N_BATCH)]
+                loss_i, loss, Qsa = self.sess.run(
+                    [self.loss_i, self.loss, self.Qsa],
+                    feed_dict={
+                        self.state: S,
+                        self.act: A,
+                        self.r: R,
+                        self.state1: S1,
+                        }
+                    )
+                li.append(np.mean(Qsa))
+            except:
+                print_exc()
+                set_trace()
+        rets.append(np.mean(li))
+    print rets
 
 
 if __name__ == "__main__":
