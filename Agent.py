@@ -63,7 +63,7 @@ class Random(Model):
         """"""
 
 
-class NNQ(Model):
+class DNQ(Model):
     def __init__(self, **kwargs):
         algo = kwargs.get('algo', 'ANN')
         print('Use %s' % algo)
@@ -77,7 +77,7 @@ class NNQ(Model):
         self.trainNFQ = kwargs.get('trainNFQ', False)
         self.algo = algo
         self.score = 0
-        self.sa_sample = [None, None]
+        self.sa_sample = [None, None, None, None, None]
 
         with tf.variable_scope('original'):
             self.state = tf.placeholder(
@@ -150,49 +150,54 @@ class NNQ(Model):
         self.SARs.update(t-1, state, act, r, terminal)
         return self
 
-    def _update(self, Target=False, nlim=None):
+    def _update(self, Target=False):
         if self.nolearn:
             return
         if (len(self.SARs) < N_REPSIZE) or (self.nolearn):
             return None
         li = []
-        fdebug(self)
 
-        for ii in xrange(200):
-            iter1 = self.ExpReplay_opt.getli(self.SARs)
-            if nlim:
-                iter1 = it.islice(iter1, nlim)
+        for j in range(5):
+            # SARs = self.SARs.subset(j, j+N)
+            SARs = self.sa_sample[j]
 
-            for t, (S, A, R, S1, terminals) in enumerate(iter1):
-                parms = self.sess, S, A, R, S1, self.summary
-                if Target:
-                    ret = self.TargetNetwork_opt.optimize(*parms)
-                else:
-                    ret = self.optimize(*parms)
+            for ii in xrange(100):
+                iter1 = self.ExpReplay_opt.getli(SARs)
+                for t, (S, A, R, S1, terminals) in enumerate(iter1):
+                    parms = self.sess, S, A, R, S1, self.summary
+                    if Target:
+                        ret = self.TargetNetwork_opt.optimize(*parms)
+                    else:
+                        ret = self.optimize(*parms)
 
-                if ret is None:
-                    return
+                    if ret is None:
+                        return
 
-                loss_res, merge_res = ret
+                    loss_res, merge_res = ret
 
-                if t and (t % 10 == 0):
-                    self.tickcnt += 1
-                    if merge_res is not None:
-                        self.writer_sum.add_summary(
-                            merge_res, self.tickcnt)
-                    if (self.tickcnt % 10 == 0) and\
-                            (not Target) and\
-                            (self.TargetNetwork_opt.enable):
-                        self._update(Target=True)
+                    if t and (t % 10 == 0):
+                        self.tickcnt += 1
+                        if merge_res is not None:
+                            self.writer_sum.add_summary(
+                                merge_res, self.tickcnt)
+                        if (self.tickcnt % 10 == 0) and\
+                                (not Target) and\
+                                (self.TargetNetwork_opt.enable):
+                            self._update(Target=True)
 
-            if (ii+1) % 10 == 0:
-                loss = self.MSE(self.sa_sample[0])
-                loss1 = self.MSE(self.sa_sample[1])
-                print ii, loss, loss1
-                if li and (abs(loss - li[-1]) < 1e-5):
-                    break
-                li.append(loss)
-        fdebug(self)
+                if (ii+1) % 10 == 0:
+                    lossli = []
+                    for i0 in range(5):
+                        lossli.append(
+                            self.MSE(self.sa_sample[i0])
+                            )
+                    print j, ii, lossli
+                    loss = lossli[j]
+                    if li and (abs(loss - li[-1]) < 1e-5):
+                        break
+                    li.append(loss)
+            fdebug(self)
+
         if len(li) == 0:
             return None
         else:
@@ -365,15 +370,19 @@ class ExpReplay(object):
         self.shuffle = shuffle
 
     def getli(self, SARs):
-        N = len(SARs)
-        if self.shuffle:
-            idxs = np.random.permutation(range(N))
-        else:
-            idxs = range(N)
-        for t in xrange(0, N, N_BATCH):
-            idx = idxs[t:(t+N_BATCH)]
-            if len(idx) == N_BATCH:
-                yield SARs[idx]
+        try:
+            N = len(SARs)
+            if self.shuffle:
+                idxs = np.random.permutation(range(N)).tolist()
+            else:
+                idxs = range(N)
+            for t in xrange(0, N, N_BATCH):
+                idx = idxs[t:(t+N_BATCH)]
+                if len(idx) == N_BATCH:
+                    yield SARs[idx]
+        except:
+            print_exc()
+            set_trace()
 
 
 class TargetNetwork(object):
@@ -445,7 +454,7 @@ class TargetNetwork(object):
 
 def NFQ(**kwargs):
     saveflag = False
-    agent = NNQ(**kwargs)
+    agent = DNQ(**kwargs)
     # agent.load()
     agent.listparm()
     SARs = SARli(lim=N_REPSIZE)  # List of (state, action)
@@ -456,21 +465,19 @@ def NFQ(**kwargs):
     ALL = range(nlim)
     flag = train
     li = []
-    sas = [None, None]
-    nsize = 100
+    sas = agent.sa_sample
+    nsize = 1000
 
     def callupdate():
-        sa0 = sas[0]
         if SARs is not agent.SARs:
             agent.SARs = SARs
-        for i in range(2):
+        for i in range(5):
             sa0 = sas[i]
             if (sa0 is None) and (len(SARs) >= nsize):
                 sa0 = SARs.subset(i*nsize, (i+1)*nsize)
                 assert len(sa0) == nsize, len(sa0)
                 sas[i] = sa0
-                agent.sa_sample[i] = sa0
-        assert agent.sa_sample[0] is not None
+        assert agent.sa_sample[4] is not None
         agent._update()
 
     for i, fi in enumerate(os.listdir('data')):
@@ -507,7 +514,7 @@ def test():
 
 def fdebug(self):
     rets = []
-    for i in range(2):
+    for i in range(5):
         li = []
         sa0 = self.sa_sample[i]
         for t in xrange(0, len(sa0), N_BATCH):

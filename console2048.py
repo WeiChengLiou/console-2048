@@ -12,7 +12,7 @@ import copy
 import random
 import functools
 import Agent
-from Agent import Model, Random, NNQ
+from Agent import Model, Random, DNQ
 from math import pow
 keypad = "adws"
 NUMSET = [pow(2, i) for i in range(12)]
@@ -220,7 +220,7 @@ class Game:
         self.records = []
         self.agent = kwargs['agent']
         self.grid0 = None
-        if isinstance(self.agent, NNQ):
+        if isinstance(self.agent, DNQ):
             self.agent.setgame(self)
         self.saveflag = kwargs.get('savegame', False)
 
@@ -283,7 +283,7 @@ def initAgent(**kwargs):
     if agent == 'random':
         return Random()
     elif agent == 'neural':
-        instance = NNQ(**kwargs)
+        instance = DNQ(**kwargs)
         if kwargs.get('load'):
             instance.load()
         return instance
