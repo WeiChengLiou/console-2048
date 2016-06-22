@@ -484,7 +484,7 @@ def NFQ(**kwargs):
                 continue
             if cnt % 100 == 0:
                 print perf
-            if cnt >= 500:
+            if cnt >= 50000:
                 break
         print perf
 
