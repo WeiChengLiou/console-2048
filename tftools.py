@@ -21,20 +21,17 @@ def fname(layer, name):
 
 
 def conv_layer(inpt, fsize, chnl, nstride, padding='SAME',
-               layer='', reuse=None):
+               layer='', reuse=None, stddev=1.):
     with tf.variable_scope(layer, reuse=reuse):
         stride = strides[nstride]
         c0 = inpt.get_shape().as_list()[-1]
         fsize = [3, 3, c0, chnl]
-        # filter1 = tf.Variable(
-        #     tf.random_normal(fsize),
-        #     name=fname(layer, 'conv'),
-        #     trainable=True)
         filter1 = tf.get_variable(
             name='conv',
             shape=fsize,
             dtype=np.float32,
-            initializer=tf.random_normal_initializer(),
+            initializer=tf.truncated_normal_initializer(
+                stddev=stddev),
             trainable=True)
         ret = tf.nn.conv2d(inpt, filter1, strides=stride, padding=padding)
     return ret
@@ -58,24 +55,17 @@ def red_mul(xs):
     return reduce(mul, xs)
 
 
-def full_layer(inpt, ndim, layer='', reuse=None):
+def full_layer(inpt, ndim, layer='', reuse=None, stddev=1.):
     with tf.variable_scope(layer, reuse=reuse):
         size0 = getshape(inpt)
         size1 = [size0[0], red_mul(size0[1:])]
         newinpt = tf.reshape(inpt, size1)
-        # weight = tf.Variable(
-        #     tf.random_normal([size1[1], ndim]),
-        #     name=fname(layer, 'weight'),
-        #     trainable=True)
-        # bias = tf.Variable(
-        #     tf.zeros([ndim]),
-        #     name=fname(layer, 'bias'),
-        #     trainable=True)
         weight = tf.get_variable(
             name='weight',
             shape=[size1[1], ndim],
             dtype=np.float32,
-            initializer=tf.random_normal_initializer(),
+            initializer=tf.truncated_normal_initializer(
+                stddev=stddev),
             trainable=True)
         bias = tf.get_variable(
             name='bias',

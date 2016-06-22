@@ -12,13 +12,16 @@ import tensorflow as tf
 import numpy as np
 from pdb import set_trace
 from random import random, randint
-from utils import chkEmpty, StateAct, encState, encReward, zeros
+from utils import chkEmpty, StateAct, encState, encReward, zeros, yload, ysave
 import savedata
 from operator import mul
 from StateAct import SARli
 SEED = 34654
 N_BATCH = 100
 N_REPSIZE = 500
+OPTIMIZER = tf.train.AdamOptimizer
+LEARNING_RATE = 1e-3
+TARGET_FREQ = 100
 
 
 def rndAction(state):
@@ -68,7 +71,6 @@ class DNQ(Model):
         algo = kwargs.get('algo', 'ANN')
         print('Use %s' % algo)
         self.SARs = SARli(lim=N_REPSIZE)  # List of (state, action)
-        self.alpha = kwargs.get('alpha', 0.5)
         self.gamma = kwargs.get('gamma', 0.5)  # Discount factor
         self.epsilon = kwargs.get('epsilon', 0.1)
         self.nolearn = not kwargs.get('train', True)
@@ -77,17 +79,17 @@ class DNQ(Model):
         self.trainNFQ = kwargs.get('trainNFQ', False)
         self.algo = algo
         self.score = 0
-        self.sa_sample = [None, None, None, None, None]
+        self.sa_sample = None
 
         with tf.variable_scope('original'):
             self.state = tf.placeholder(
-                tf.float32, shape=(N_BATCH, 4, 4, 4), name='state')
+                tf.float32, shape=(N_BATCH, 1, 4, 4), name='state')
             self.act = tf.placeholder(
                 tf.int32, shape=[N_BATCH], name='act')
             self.r = tf.placeholder(
                 tf.float32, shape=[N_BATCH, 1], name='r')
             self.state1 = tf.placeholder(
-                tf.float32, shape=(N_BATCH, 4, 4, 4), name='state1')
+                tf.float32, shape=(N_BATCH, 1, 4, 4), name='state1')
 
         self.model_init = eval(algo)
         self.model = self.model_init(
@@ -148,60 +150,43 @@ class DNQ(Model):
 
         state = encState(state)
         self.SARs.update(t-1, state, act, r, terminal)
-        return self
+        return self._update()
 
     def _update(self, Target=False):
         if self.nolearn:
             return
-        if (len(self.SARs) < N_REPSIZE) or (self.nolearn):
-            return None
-        li = []
+        if (len(self.SARs) < N_REPSIZE):
+            return
 
-        for j in range(5):
-            # SARs = self.SARs.subset(j, j+N)
-            SARs = self.sa_sample[j]
+        loss = None
+        iter1 = self.ExpReplay_opt.getli(self.SARs)
+        iter1 = it.islice(iter1, 10)
+        for t, (S, A, R, S1, terminals) in enumerate(iter1):
+            parms = self.sess, S, A, R, S1, self.summary
+            if Target:
+                ret = self.TargetNetwork_opt.optimize(*parms)
+            else:
+                ret = self.optimize(*parms)
 
-            for ii in xrange(100):
-                iter1 = self.ExpReplay_opt.getli(SARs)
-                for t, (S, A, R, S1, terminals) in enumerate(iter1):
-                    parms = self.sess, S, A, R, S1, self.summary
-                    if Target:
-                        ret = self.TargetNetwork_opt.optimize(*parms)
-                    else:
-                        ret = self.optimize(*parms)
+            if ret is None:
+                return
 
-                    if ret is None:
-                        return
+            loss_res, merge_res = ret
+            self.tickcnt += 1
 
-                    loss_res, merge_res = ret
+            if self.tickcnt % 10 == 0:
+                loss = self.MSE(self.SARs)
+                print self.tickcnt/10, loss
+                if (merge_res is not None):
+                    self.writer_sum.add_summary(
+                        merge_res, self.tickcnt/10)
 
-                    if t and (t % 10 == 0):
-                        self.tickcnt += 1
-                        if merge_res is not None:
-                            self.writer_sum.add_summary(
-                                merge_res, self.tickcnt)
-                        if (self.tickcnt % 10 == 0) and\
-                                (not Target) and\
-                                (self.TargetNetwork_opt.enable):
-                            self._update(Target=True)
+            if self.tickcnt % TARGET_FREQ == 0:
+                if (not Target) and (self.TargetNetwork_opt.enable):
+                    print 'update Target'
+                    self._update(Target=True)
 
-                if (ii+1) % 10 == 0:
-                    lossli = []
-                    for i0 in range(5):
-                        lossli.append(
-                            self.MSE(self.sa_sample[i0])
-                            )
-                    print j, ii, lossli
-                    loss = lossli[j]
-                    if li and (abs(loss - li[-1]) < 1e-5):
-                        break
-                    li.append(loss)
-            fdebug(self)
-
-        if len(li) == 0:
-            return None
-        else:
-            return np.mean(li)
+        return loss
 
     def predict(self, state):
         # state = encState(state)
@@ -242,18 +227,24 @@ class DNQ(Model):
     def reset(self):
         self.score = 0
 
-    def save(self):
+    def save(self, idx=None):
         if self.nolearn:
             return
         # self.saveobj.save(self.getparm())
-        self.saver.save(
-            self.sess,
-            'tmp/%s%s.ckpt' % (self.algo, self.kw)
-            )
+        if idx:
+            fi = 'tmp/%s%s.%s.ckpt' % (self.algo, self.kw, idx)
+        else:
+            fi = 'tmp/%s%s.ckpt' % (self.algo, self.kw)
+        print fi
+
+        self.saver.save(self.sess, fi)
         return self
 
-    def load(self):
-        fi = 'tmp/%s%s.ckpt' % (self.algo, self.kw)
+    def load(self, idx=None):
+        if idx:
+            fi = 'tmp/%s%s.%s.ckpt' % (self.algo, self.kw, idx)
+        else:
+            fi = 'tmp/%s%s.ckpt' % (self.algo, self.kw)
         if os.path.exists(fi):
             print 'Load parameters'
             self.saver.restore(self.sess, fi)
@@ -277,7 +268,7 @@ class DNQ(Model):
             loss = r + gamma * maxQ(self.Qhat) - Qsa
             loss = tf.square(loss)
             self.loss = tf.reduce_mean(loss)
-            self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
+            self.op = OPTIMIZER(LEARNING_RATE).minimize(self.loss)
             self.loss_i = loss
             self.Qsa = Qsa
 
@@ -292,14 +283,10 @@ class DNQ(Model):
             self.state1: state1,
             }
 
-        try:
-            ret = sess.run(
-                varlist,
-                feed_dict=feed_dict
-                )
-        except:
-            print_exc()
-            set_trace()
+        ret = sess.run(
+            varlist,
+            feed_dict=feed_dict
+            )
 
         if summary is not None:
             return ret[0], ret[2]
@@ -327,9 +314,12 @@ class DNQ(Model):
 
 
 def ANN(state, layer='', reuse=None):
+    std = 0.01
     with tf.variable_scope(layer, reuse=reuse):
-        model = relu(full_layer(state, 8, layer='layer2', reuse=reuse))
-        model = relu(full_layer(model, 4, layer='layer3', reuse=reuse))
+        model = relu(full_layer(
+            state, 256, layer='layer1', reuse=reuse, stddev=std))
+        model = relu(full_layer(
+            model, 256, layer='layer2', reuse=reuse, stddev=std))
     return model
 
 
@@ -370,19 +360,15 @@ class ExpReplay(object):
         self.shuffle = shuffle
 
     def getli(self, SARs):
-        try:
-            N = len(SARs)
-            if self.shuffle:
-                idxs = np.random.permutation(range(N)).tolist()
-            else:
-                idxs = range(N)
-            for t in xrange(0, N, N_BATCH):
-                idx = idxs[t:(t+N_BATCH)]
-                if len(idx) == N_BATCH:
-                    yield SARs[idx]
-        except:
-            print_exc()
-            set_trace()
+        N = len(SARs)
+        if self.shuffle:
+            idxs = np.random.permutation(range(N)).tolist()
+        else:
+            idxs = range(N)
+        for t in xrange(0, N, N_BATCH):
+            idx = idxs[t:(t+N_BATCH)]
+            if len(idx) == N_BATCH:
+                yield SARs[idx]
 
 
 class TargetNetwork(object):
@@ -418,7 +404,7 @@ class TargetNetwork(object):
             self.loss = tf.reduce_mean(
                 tf.square(self.Qval_old - Qsa)
                 )
-            self.op = tf.train.AdamOptimizer(1e-2).minimize(self.loss)
+            self.op = OPTIMIZER(LEARNING_RATE).minimize(self.loss)
 
     def optimize(self, sess, state, act, r, state1, summary=None):
         if not self.enable:
@@ -459,47 +445,60 @@ def NFQ(**kwargs):
     agent.listparm()
     SARs = SARli(lim=N_REPSIZE)  # List of (state, action)
 
-    nlim = 20000
-    train = range(188)
-    test = range(188, 363)
-    ALL = range(nlim)
-    flag = train
-    li = []
-    sas = agent.sa_sample
-    nsize = 1000
+    if os.path.exists('perfdic.yaml'):
+        perfdic = yload()
+        idx = np.max(perfdic.keys()) + 1
+    else:
+        perfdic = {}
+        idx = 0
 
-    def callupdate():
-        if SARs is not agent.SARs:
-            agent.SARs = SARs
-        for i in range(5):
-            sa0 = sas[i]
-            if (sa0 is None) and (len(SARs) >= nsize):
-                sa0 = SARs.subset(i*nsize, (i+1)*nsize)
-                assert len(sa0) == nsize, len(sa0)
-                sas[i] = sa0
-        assert agent.sa_sample[4] is not None
-        agent._update()
+    sas = [None]
+    agent.sa_sample = sas
 
-    for i, fi in enumerate(os.listdir('data')):
-        if i not in flag:
+    def callupdate(tick):
+        t, state, act, r1, terminal = tick
+        loss = agent.update(t, state, act, r1, terminal)
+
+        sa0 = sas[0]
+        if (sa0 is None) and (len(SARs) >= N_REPSIZE):
+            sa0 = SARs.subset(0, N_REPSIZE)
+            assert len(sa0) == N_REPSIZE, len(sa0)
+            sas[0] = sa0
+            agent.sa_sample = sas
+
+        return loss
+
+    def gettick():
+        cnt = 0
+        for fi in sorted(os.listdir('data')):
+            fi = 'data/%s' % fi
+            rets = cPickle.load(gzip.open(fi))
+
+            for (t, state, act, r, terminal) in rets:
+                if terminal == 0:
+                    r += 2
+                if r < 0:
+                    r = -2
+                    r1 = -1
+                else:
+                    r1 = np.log2(max(r, 1))
+                cnt += 1
+                yield cnt, (t, state, act, r1, terminal)
+
+    for cnt, tick in gettick():
+        perf = callupdate(tick)
+
+        if len(agent.SARs) < N_REPSIZE:
             continue
-        fi = 'data/%s' % fi
-        rets = cPickle.load(gzip.open(fi))
-
-        for j, (t, state, act, r, terminal) in enumerate(rets):
-            # if r >= 0:
-            #     r += 2
-            SARs.update(t-1, encState(state), act, r, terminal)
-            if len(SARs) >= N_REPSIZE:
-                break
-
-        if len(SARs) >= N_REPSIZE:
+        if cnt % 100 == 0:
+            fdebug(agent)
+        if cnt >= 100000:
             break
 
-    callupdate()
-
     if saveflag:
-        agent.save()
+        perfdic[idx] = float(perf)
+        agent.save(idx)
+        ysave(perfdic, 'perfdic.yaml')
 
 
 def test():
@@ -514,9 +513,9 @@ def test():
 
 def fdebug(self):
     rets = []
-    for i in range(5):
-        li = []
-        sa0 = self.sa_sample[i]
+    ret2 = []
+    for sa0 in self.sa_sample:
+        li, li2 = [], []
         for t in xrange(0, len(sa0), N_BATCH):
             try:
                 S, A, R, S1, terminals = sa0[t:(t+N_BATCH)]
@@ -529,12 +528,16 @@ def fdebug(self):
                         self.state1: S1,
                         }
                     )
-                li.append(np.mean(Qsa))
+                li.append(np.mean(loss))
+                li2.append(np.mean(np.power(R, 2)))
             except:
                 print_exc()
                 set_trace()
-        rets.append(np.mean(li))
-    print rets
+        rets.append(round(np.mean(li), 4))
+        ret2.append(round(np.mean(li2), 4))
+    ret = np.c_[rets, ret2]
+    ret = np.c_[ret, ret[:, 0]/ret[:, 1]]
+    print ret
 
 
 if __name__ == "__main__":

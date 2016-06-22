@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import numpy as np
+import yaml
 
 
 class State(object):
@@ -48,3 +49,12 @@ def chkEmpty(s1, i):
 
 def encReward(r):
     return np.log2(r + 1)
+
+
+def ysave(obj, fi):
+    yaml.dump(obj, open(fi, 'wb'))
+
+
+def yload(fi):
+    return yaml.load(open(fi, 'rb'))
+

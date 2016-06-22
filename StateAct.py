@@ -64,15 +64,15 @@ class SARli(types.ListType):
     def __getstate__(self, i):
         try:
             if len(self.sars) > i:
-                li = [self.sars[j].state for j in range(i-3, i+1)]
+                li = [self.sars[j].state for j in range(i-0, i+1)]
             elif len(self.sars) == i:
-                li = [self.sars[j].state for j in range(i-3, i)]
+                li = [self.sars[j].state for j in range(i-0, i)]
                 li.append(s_zero())
             else:
                 raise Exception('Index error')
-            return np.vstack(li).reshape((1, 4, 4, 4))
+            return np.vstack(li).reshape((1, 1, 4, 4))
         except Exception as e:
-            raise Exception(e, i, len(self.sars), range(i-3, i+1))
+            raise Exception(e, i, len(self.sars), range(i-0, i+1))
 
     def __getitem__(self, i):
         if isinstance(i, list):
@@ -104,10 +104,11 @@ class SARli(types.ListType):
             set_trace()
 
     def getstate_new(self, state):
-        li = [s.state for s in self.sars[-3:]]
+        # li = [s.state for s in self.sars[-3:]]
+        li = []
         state.flags.writeable = False
         li.append(state)
-        return self.hashable(np.vstack(li).reshape((1, 4, 4, 4)))
+        return self.hashable(np.vstack(li).reshape((1, 1, 4, 4)))
 
     def subset(self, i0, i1):
         n = i1 - i0
