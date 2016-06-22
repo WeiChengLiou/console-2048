@@ -176,7 +176,6 @@ class DNQ(Model):
 
             if self.tickcnt % 10 == 0:
                 loss = self.MSE(self.SARs)
-                print self.tickcnt/10, loss
                 if (merge_res is not None):
                     self.writer_sum.add_summary(
                         merge_res, self.tickcnt/10)
@@ -443,7 +442,6 @@ def NFQ(**kwargs):
     agent = DNQ(**kwargs)
     # agent.load()
     agent.listparm()
-    SARs = SARli(lim=N_REPSIZE)  # List of (state, action)
 
     if os.path.exists('perfdic.yaml'):
         perfdic = yload()
@@ -492,9 +490,12 @@ def NFQ(**kwargs):
         if len(agent.SARs) < N_REPSIZE:
             continue
         if cnt % 100 == 0:
+            print perf,
             fdebug(agent)
         if cnt >= 100000:
             break
+    print perf,
+    fdebug(agent)
 
     if saveflag:
         perfdic[idx] = float(perf)
@@ -559,4 +560,7 @@ if __name__ == "__main__":
     if args.get('N_REPSIZE'):
         N_REPSIZE = args['N_REPSIZE']
 
+    args['TargetNetwork'] = False
+    NFQ(**args)
+    args['TargetNetwork'] = True
     NFQ(**args)
