@@ -460,8 +460,9 @@ def NFQ(**kwargs):
         loss = agent.update(t, state, act, r1, terminal)
 
         sa0 = sas[0]
-        if (sa0 is None) and (len(SARs) >= N_REPSIZE):
-            sa0 = SARs.subset(0, N_REPSIZE)
+        if (sa0 is None) and (len(agent.SARs) >= N_REPSIZE):
+            print 'write sa0'
+            sa0 = agent.SARs.subset(0, N_REPSIZE)
             assert len(sa0) == N_REPSIZE, len(sa0)
             sas[0] = sa0
             agent.sa_sample = sas
