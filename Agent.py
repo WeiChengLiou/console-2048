@@ -154,8 +154,7 @@ class DNQ(Model):
             return
 
         loss = None
-        iter1 = self.ExpReplay_opt.getli(self.SARs)
-        iter1 = it.islice(iter1, 10)
+        iter1 = self.ExpReplay_opt.getli(self.SARs, n_run=10)
         runTarget = False
         for t, (S, A, R, S1, terminals) in enumerate(iter1):
             if Target:
@@ -371,18 +370,16 @@ class ExpReplay(object):
     def __init__(self, obj, shuffle=False):
         self.shuffle = shuffle
 
-    def getli(self, SARs):
+    def getli(self, SARs, n_run=10):
         N = len(SARs)
         idxs = range(N)
         if self.shuffle:
-            while 1:
-                idx = sample(idxs, N_BATCH)
+            idxs = sample(idxs, N_BATCH*n_run)
+
+        for t in xrange(0, len(idxs), N_BATCH):
+            idx = idxs[t:(t+N_BATCH)]
+            if len(idx) == N_BATCH:
                 yield SARs[idx]
-        else:
-            for t in xrange(0, N, N_BATCH):
-                idx = idxs[t:(t+N_BATCH)]
-                if len(idx) == N_BATCH:
-                    yield SARs[idx]
 
 
 class TargetNetwork(object):
