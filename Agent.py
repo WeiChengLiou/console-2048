@@ -11,9 +11,8 @@ import itertools as it
 import tensorflow as tf
 import numpy as np
 from pdb import set_trace
-from random import random, randint
-from utils import chkEmpty, StateAct, encState, encReward, zeros, yload, ysave
-import savedata
+from random import random, randint, sample
+from utils import encState, zeros, yload, ysave
 from operator import mul
 from StateAct import SARli
 SEED = 34654
@@ -86,20 +85,16 @@ class DNQ(Model):
                 tf.float32, shape=(N_BATCH, 1, 4, 4), name='state')
             self.act = tf.placeholder(
                 tf.int32, shape=[N_BATCH], name='act')
-            self.r = tf.placeholder(
+            self.target = tf.placeholder(
                 tf.float32, shape=[N_BATCH, 1], name='r')
-            self.state1 = tf.placeholder(
-                tf.float32, shape=(N_BATCH, 1, 4, 4), name='state1')
 
         self.model_init = eval(algo)
         self.model = self.model_init(
             self.state, 'model', reuse=None)
-        self.Qhat = self.model_init(
-            self.state1, 'model', reuse=True)
         self.loss_def(
             self.model,
             self.act,
-            self.r,
+            self.target,
             self.gamma,
             )
         self.parms = listVar(self.model)
@@ -161,29 +156,31 @@ class DNQ(Model):
         loss = None
         iter1 = self.ExpReplay_opt.getli(self.SARs)
         iter1 = it.islice(iter1, 10)
+        runTarget = False
         for t, (S, A, R, S1, terminals) in enumerate(iter1):
-            parms = self.sess, S, A, R, S1, self.summary
             if Target:
-                ret = self.TargetNetwork_opt.optimize(*parms)
+                self.TargetNetwork_opt.optimize(
+                    self.sess, S, A, R, S1, terminals)
+                continue
             else:
-                ret = self.optimize(*parms)
-
-            if ret is None:
-                return
-
-            loss_res, merge_res = ret
-            self.tickcnt += 1
+                self.tickcnt += 1
+                ret = self.eval(
+                    S, A, R, S1, terminals,
+                    optimize=True, summary=True)
+            assert ret is not None
 
             if self.tickcnt % 10 == 0:
                 loss = self.MSE(self.SARs)
-                if (merge_res is not None):
-                    self.writer_sum.add_summary(
-                        merge_res, self.tickcnt/10)
 
-            if self.tickcnt % TARGET_FREQ == 0:
-                if (not Target) and (self.TargetNetwork_opt.enable):
-                    print 'update Target'
-                    self._update(Target=True)
+            if (not Target) and (self.tickcnt % TARGET_FREQ == 0):
+                if (self.TargetNetwork_opt.enable):
+                    runTarget = True
+
+        if runTarget:
+            self._update(True)
+
+        if (not Target) and (loss is None):
+            loss = self.MSE(self.SARs)
 
         return loss
 
@@ -261,52 +258,66 @@ class DNQ(Model):
         assert len(s1) == 16
         return encState(s1)
 
-    def loss_def(self, model, act, r, gamma):
+    def loss_def(self, model, act, target, gamma):
         with tf.variable_scope('original'):
             Qsa = tf.reshape(fgetidx(model, act), [-1, 1])
-            loss = r + gamma * maxQ(self.Qhat) - Qsa
+            loss = target - Qsa
             loss = tf.square(loss)
             self.loss = tf.reduce_mean(loss)
             self.op = OPTIMIZER(LEARNING_RATE).minimize(self.loss)
             self.loss_i = loss
             self.Qsa = Qsa
 
-    def optimize(self, sess, state, act, r, state1, summary=None):
-        varlist = [self.loss, self.op]
-        if summary is not None:
-            varlist.append(summary)
+    def eval(self, state, act, r, state1, terminals,
+             optimize=False, summary=False):
+        target = r
+        if self.gamma:
+            Qhat = self.sess.run(
+                self.model,
+                feed_dict={self.state: state1})
+            Qhat = np.max(Qhat, axis=1).reshape([-1, 1])
+            idx = np.argwhere(terminals == 0).ravel()
+            target[idx, 0] += self.gamma * Qhat[idx, 0]
+
+        return self._optfun(
+            state, act, target,
+            optimize=optimize, summary=summary)
+
+    def _optfun(self, state, act, target,
+                optimize=False, summary=False):
+        varlist = [self.loss]
+        if optimize:
+            varlist.append(self.op)
+        if summary:
+            varlist.append(self.summary)
+
         feed_dict = {
             self.state: state,
             self.act: act,
-            self.r: r,
-            self.state1: state1,
+            self.target: target,
             }
 
-        ret = sess.run(
+        ret = self.sess.run(
             varlist,
             feed_dict=feed_dict
             )
 
-        if summary is not None:
-            return ret[0], ret[2]
-        else:
-            return ret[0]
+        if summary and (self.tickcnt % 10 == 0):
+            merge_res = ret[-1]
+            self.writer_sum.add_summary(
+                merge_res, self.tickcnt/10)
+
+        return ret[0]
 
     def MSE(self, SARs):
         def fun(i):
             idx = range(i, i+N_BATCH)
             if idx[-1] >= len(SARs):
                 return np.nan
-            state, act, r, state1, terminal = SARs[idx]
-            loss = self.sess.run(
-                self.loss,
-                feed_dict={
-                    self.state: state,
-                    self.act: act,
-                    self.r: r,
-                    self.state1: state1
-                    }
-                )
+            state, act, r, state1, terminals = SARs[idx]
+            loss = self.eval(
+                state, act, r, state1, terminals,
+                optimize=False, summary=False)
             return loss
         li = map(fun, xrange(0, len(SARs), N_BATCH))
         return np.nanmean(li)
@@ -362,14 +373,16 @@ class ExpReplay(object):
 
     def getli(self, SARs):
         N = len(SARs)
+        idxs = range(N)
         if self.shuffle:
-            idxs = np.random.permutation(range(N)).tolist()
-        else:
-            idxs = range(N)
-        for t in xrange(0, N, N_BATCH):
-            idx = idxs[t:(t+N_BATCH)]
-            if len(idx) == N_BATCH:
+            while 1:
+                idx = sample(idxs, N_BATCH)
                 yield SARs[idx]
+        else:
+            for t in xrange(0, N, N_BATCH):
+                idx = idxs[t:(t+N_BATCH)]
+                if len(idx) == N_BATCH:
+                    yield SARs[idx]
 
 
 class TargetNetwork(object):
@@ -384,30 +397,17 @@ class TargetNetwork(object):
     def __init__(self, obj, enable=False):
         self.state = obj.state
         self.act = obj.act
-        self.r = obj.r
-        self.state1 = obj.state1
+        self.target = obj.target
         self.enable = enable
+        self.gamma = obj.gamma
 
         # initialize another NN structure
-        self.model_old = obj.model_init(self.state1, 'model0')
+        self.optfun = obj._optfun
+        self.model_old = obj.model_init(self.state, 'model0')
         self.assigns = setAssign(obj.model, self.model_old)
         self.firstRun = False
 
-        with tf.variable_scope('new'):
-            nrow, ncol = getshape(self.model_old)
-            self.Qval_old = tf.placeholder(
-                self.model_old.dtype,
-                shape=[nrow, 1],
-                name='Qval',
-                )
-            self.Qhat_old = self.r + obj.gamma * maxQ(self.model_old)
-            Qsa = tf.reshape(fgetidx(obj.model, self.act), [-1, 1])
-            self.loss = tf.reduce_mean(
-                tf.square(self.Qval_old - Qsa)
-                )
-            self.op = OPTIMIZER(LEARNING_RATE).minimize(self.loss)
-
-    def optimize(self, sess, state, act, r, state1, summary=None):
+    def optimize(self, sess, state, act, r, state1, terminals):
         if not self.enable:
             return
 
@@ -416,27 +416,17 @@ class TargetNetwork(object):
             self.firstRun = True
             return
 
-        Qhat = sess.run(
-            self.Qhat_old,
-            feed_dict={
-                self.r: r,
-                self.state1: state1,
-                })
-
-        varlist = [self.loss, self.op]
-
-        ret = sess.run(
-            varlist,
-            feed_dict={
-                self.Qval_old: Qhat,
-                self.state: state,
-                self.act: act,
-                }
-            )
+        target = r
+        if self.gamma:
+            Qhat = sess.run(
+                self.model_old,
+                feed_dict={self.state: state1})
+            Qhat = np.max(Qhat, axis=1).reshape([-1, 1])
+            idx = np.argwhere(terminals == 0).ravel()
+            target[idx, 0] += self.gamma * Qhat[idx, 0]
+        self.optfun(state, act, target, optimize=True, summary=False)
 
         sess.run(self.assigns)
-
-        return ret[0], None
 
 
 def NFQ(**kwargs):
@@ -486,23 +476,25 @@ def NFQ(**kwargs):
                 cnt += 1
                 yield cnt, (t, state, act, r1, terminal)
 
-    for cnt, tick in gettick():
-        perf = callupdate(tick)
+    try:
+        for cnt, tick in gettick():
+            perf = callupdate(tick)
 
-        if len(agent.SARs) < N_REPSIZE:
-            continue
-        if cnt % 100 == 0:
-            print perf,
-            fdebug(agent)
-        if cnt >= 100000:
-            break
-    print perf,
-    fdebug(agent)
+            if len(agent.SARs) < N_REPSIZE:
+                continue
+            if cnt % 100 == 0:
+                print perf
+            if cnt >= 500:
+                break
+        print perf
 
-    if saveflag:
-        perfdic[idx] = float(perf)
-        agent.save(idx)
-        ysave(perfdic, 'perfdic.yaml')
+        if saveflag:
+            perfdic[idx] = float(perf)
+            agent.save(idx)
+            ysave(perfdic, 'perfdic.yaml')
+    except:
+        print_exc()
+        set_trace()
 
 
 def test():
@@ -548,8 +540,8 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', help='config file')
-    args = parser.parse_args()
-    args = vars(args)
+    args_raw = parser.parse_args()
+    args = vars(args_raw)
     if args['config']:
         config = yaml.load(open(args['config'], 'rb'))
         args.update(config)
@@ -562,7 +554,4 @@ if __name__ == "__main__":
     if args.get('N_REPSIZE'):
         N_REPSIZE = args['N_REPSIZE']
 
-    args['TargetNetwork'] = False
-    NFQ(**args)
-    args['TargetNetwork'] = True
     NFQ(**args)
