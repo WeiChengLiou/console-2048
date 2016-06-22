@@ -319,6 +319,8 @@ def ANN(state, layer='', reuse=None):
             state, 256, layer='layer1', reuse=reuse, stddev=std))
         model = relu(full_layer(
             model, 256, layer='layer2', reuse=reuse, stddev=std))
+        model = relu(full_layer(
+            model, 4, layer='layer3', reuse=reuse, stddev=std))
     return model
 
 
