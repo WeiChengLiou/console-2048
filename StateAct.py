@@ -7,7 +7,7 @@ from abc import types
 from collections import namedtuple
 from traceback import print_exc
 SAR = namedtuple('SAR', ['state', 'act', 'r', 'terminal'])
-s_zero = lambda: np.zeros((1, 4, 4), dtype=np.float32)
+s_zero = lambda: np.zeros((4, 4, 1), dtype=np.float32)
 
 
 class SARli(types.ListType):
@@ -70,7 +70,7 @@ class SARli(types.ListType):
                 li.append(s_zero())
             else:
                 raise Exception('Index error')
-            return np.vstack(li).reshape((1, 1, 4, 4))
+            return np.vstack(li).reshape((1, 4, 4, 1))
         except Exception as e:
             raise Exception(e, i, len(self.sars), range(i-0, i+1))
 

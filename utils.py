@@ -29,7 +29,7 @@ class StateAct(object):
             return self.score
 
 
-zeros = lambda x: np.zeros((x, 4, 4, 4))
+zeros = lambda x: np.zeros((x, 4, 4, 1))
 
 
 def encState(state):
@@ -37,7 +37,7 @@ def encState(state):
     for i in range(4):
         assert len(state[i]) == 4
     s1 = np.array(state).astype(np.float)
-    return np.log2(s1 + 1).reshape((1, 4, 4))
+    return np.log2(s1 + 1).reshape((4, 4, 1))
 
 
 def chkEmpty(s1, i):

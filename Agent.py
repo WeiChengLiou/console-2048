@@ -82,7 +82,7 @@ class DNQ(Model):
 
         with tf.variable_scope('original'):
             self.state = tf.placeholder(
-                tf.float32, shape=(N_BATCH, 1, 4, 4), name='state')
+                tf.float32, shape=(N_BATCH, 4, 4, 1), name='state')
             self.act = tf.placeholder(
                 tf.int32, shape=[N_BATCH], name='act')
             self.target = tf.placeholder(
@@ -154,7 +154,7 @@ class DNQ(Model):
             return
 
         loss = None
-        iter1 = self.ExpReplay_opt.getli(self.SARs, n_run=10)
+        iter1 = self.ExpReplay_opt.getli(self.SARs, n_run=2)
         runTarget = False
         for t, (S, A, R, S1, terminals) in enumerate(iter1):
             if Target:
@@ -163,13 +163,13 @@ class DNQ(Model):
                 continue
             else:
                 self.tickcnt += 1
-                ret = self.eval(
+                ret = self.optimize(
                     S, A, R, S1, terminals,
-                    optimize=True, summary=True)
+                    summary=True)
             assert ret is not None
 
             if self.tickcnt % 10 == 0:
-                loss = self.MSE(self.SARs)
+                loss = self.fitness(self.sa_sample)
 
             if (not Target) and (self.tickcnt % TARGET_FREQ == 0):
                 if (self.TargetNetwork_opt.enable):
@@ -179,16 +179,13 @@ class DNQ(Model):
             self._update(True)
 
         if (not Target) and (loss is None):
-            loss = self.MSE(self.SARs)
+            loss = self.fitness(self.sa_sample)
 
         return loss
 
     def predict(self, state):
         # state = encState(state)
         """ epsilon-greedy algorithm """
-        if (len(self.records) < 3):
-            return rndAction(state)
-
         state = self.SARs.getstate_new(self.encState(state))
         if random() < self.epsilon:
             act = rndAction(state)
@@ -205,11 +202,10 @@ class DNQ(Model):
         act = -1
         assert type(state) == np.ndarray, type(state)
         state = self.FULL(state)
-        r, = self.sess.run(
-            [self.model],
-            feed_dict={self.state: state})
+        Q, = self.eval(state)
+        Q = Q[0, :]
 
-        for i in np.argsort(r[0, :].ravel())[::-1]:
+        for i in np.argsort(Q.ravel())[::-1]:
             act = i
             break
         assert act != -1
@@ -267,26 +263,32 @@ class DNQ(Model):
             self.loss_i = loss
             self.Qsa = Qsa
 
-    def eval(self, state, act, r, state1, terminals,
-             optimize=False, summary=False):
+    def eval(self, state, getmax=False):
+        Q = self.sess.run(
+            self.model,
+            feed_dict={
+                self.state: state
+                })
+        if getmax:
+            return np.max(Q, axis=1).reshape([-1, 1])
+        else:
+            return Q
+
+    def optimize(self, state, act, r, state1, terminals,
+                 summary=False):
         target = r
         if self.gamma:
-            Qhat = self.sess.run(
-                self.model,
-                feed_dict={self.state: state1})
-            Qhat = np.max(Qhat, axis=1).reshape([-1, 1])
+            Qhat = self.eval(state1, getmax=True)
             idx = np.argwhere(terminals == 0).ravel()
             target[idx, 0] += self.gamma * Qhat[idx, 0]
 
         return self._optfun(
             state, act, target,
-            optimize=optimize, summary=summary)
+            summary=summary)
 
     def _optfun(self, state, act, target,
-                optimize=False, summary=False):
-        varlist = [self.loss]
-        if optimize:
-            varlist.append(self.op)
+                summary=False):
+        varlist = [self.loss, self.op]
         if summary:
             varlist.append(self.summary)
 
@@ -308,17 +310,17 @@ class DNQ(Model):
 
         return ret[0]
 
-    def MSE(self, SARs):
+    def fitness(self, ret):
+        N = len(ret[0])
+
         def fun(i):
             idx = range(i, i+N_BATCH)
-            if idx[-1] >= len(SARs):
+            if idx[-1] >= N:
                 return np.nan
-            state, act, r, state1, terminals = SARs[idx]
-            loss = self.eval(
-                state, act, r, state1, terminals,
-                optimize=False, summary=False)
+            state = ret[0][idx]
+            loss = self.eval(state, getmax=True)
             return loss
-        li = map(fun, xrange(0, len(SARs), N_BATCH))
+        li = map(fun, xrange(0, N, N_BATCH))
         return np.nanmean(li)
 
 
@@ -335,15 +337,16 @@ def ANN(state, layer='', reuse=None):
 
 
 def CNN(state, layer='', reuse=None):
+    std = 0.01
     with tf.variable_scope(layer, reuse=reuse):
-        model = relu(conv_layer(
-            state, [2, 2], 16, 1, layer='layer1', reuse=reuse))
-        # model = relu(conv_layer(
-        #     model, [2, 2], 32, 1, layer='layer2', reuse=reuse))
-        # model = relu(full_layer(model, 256, layer='layer3', reuse=reuse))
-        # model = relu(full_layer(model, 64, layer='layer3', reuse=reuse))
-        model = relu(full_layer(model, 8, layer='layer3', reuse=reuse))
-        model = relu(full_layer(model, 4, layer='layer4', reuse=reuse))
+        model = (conv_layer(
+            state, [2, 2], 16, 1, layer='layer1', reuse=reuse, stddev=std))
+        model = (conv_layer(
+            model, [2, 2], 32, 1, layer='layer2', reuse=reuse, stddev=std))
+        model = relu(full_layer(
+            model, 64, layer='layer3', reuse=reuse, stddev=std))
+        model = tf.tanh(full_layer(
+            model, 4, layer='layer4', reuse=reuse, stddev=std))
     return model
 
 
@@ -399,7 +402,7 @@ class TargetNetwork(object):
         self.gamma = obj.gamma
 
         # initialize another NN structure
-        self.optfun = obj._optfun
+        self._optfun = obj._optfun
         self.model_old = obj.model_init(self.state, 'model0')
         self.assigns = setAssign(obj.model, self.model_old)
         self.firstRun = False
@@ -421,7 +424,7 @@ class TargetNetwork(object):
             Qhat = np.max(Qhat, axis=1).reshape([-1, 1])
             idx = np.argwhere(terminals == 0).ravel()
             target[idx, 0] += self.gamma * Qhat[idx, 0]
-        self.optfun(state, act, target, optimize=True, summary=False)
+        self._optfun(state, act, target, summary=False)
 
         sess.run(self.assigns)
 
@@ -439,21 +442,9 @@ def NFQ(**kwargs):
         perfdic = {}
         idx = 0
 
-    sas = [None]
-    agent.sa_sample = sas
-
     def callupdate(tick):
         t, state, act, r1, terminal = tick
         loss = agent.update(t, state, act, r1, terminal)
-
-        sa0 = sas[0]
-        if (sa0 is None) and (len(agent.SARs) >= N_REPSIZE):
-            print 'write sa0'
-            sa0 = agent.SARs.subset(0, N_REPSIZE)
-            assert len(sa0) == N_REPSIZE, len(sa0)
-            sas[0] = sa0
-            agent.sa_sample = sas
-
         return loss
 
     def gettick():
@@ -463,17 +454,26 @@ def NFQ(**kwargs):
             rets = cPickle.load(gzip.open(fi))
 
             for (t, state, act, r, terminal) in rets:
-                if terminal == 0:
-                    r += 2
-                if r < 0:
-                    r = -2
-                    r1 = -1
-                else:
-                    r1 = np.log2(max(r, 1))
+                if terminal:
+                    r = -1
+                elif r > 0:
+                    r = 1
                 cnt += 1
-                yield cnt, (t, state, act, r1, terminal)
+                yield cnt, (t, state, act, r, terminal)
 
     try:
+        n = 2000
+        SARs = SARli(lim=n)
+        for cnt, tick in gettick():
+            t, state, act, r1, terminal = tick
+            state = encState(state)
+            SARs.update(t-1, state, act, r1, terminal)
+            if len(SARs) == n:
+                break
+        idx = sample(range(n), n/2)
+        ret = SARs[idx]
+        agent.sa_sample = ret
+
         for cnt, tick in gettick():
             perf = callupdate(tick)
 
@@ -481,7 +481,7 @@ def NFQ(**kwargs):
                 continue
             if cnt % 100 == 0:
                 print perf
-            if cnt >= 50000:
+            if cnt >= 10000:
                 break
         print perf
 
