@@ -20,7 +20,7 @@ N_BATCH = 100
 N_REPSIZE = 500
 OPTIMIZER = tf.train.AdamOptimizer
 LEARNING_RATE = 1e-3
-TARGET_FREQ = 100
+TARGET_FREQ = 1000
 
 
 def rndAction(state):
@@ -461,8 +461,9 @@ def NFQ(**kwargs):
                 cnt += 1
                 yield cnt, (t, state, act, r, terminal)
 
+    li = []
     try:
-        n = 2000
+        n = 20000
         SARs = SARli(lim=n)
         for cnt, tick in gettick():
             t, state, act, r1, terminal = tick
@@ -480,10 +481,11 @@ def NFQ(**kwargs):
             if len(agent.SARs) < N_REPSIZE:
                 continue
             if cnt % 100 == 0:
+                li.append(perf)
                 print perf
-            if cnt >= 10000:
+            if cnt >= 50000:
                 break
-        print perf
+        np.savez(open('perf.npz', 'wb'), li)
 
         if saveflag:
             perfdic[idx] = float(perf)
