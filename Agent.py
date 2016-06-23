@@ -19,7 +19,7 @@ SEED = 34654
 N_BATCH = 100
 N_REPSIZE = 500
 OPTIMIZER = tf.train.AdamOptimizer
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 1e-2
 TARGET_FREQ = 1000
 
 
@@ -316,12 +316,13 @@ class DNQ(Model):
         def fun(i):
             idx = range(i, i+N_BATCH)
             if idx[-1] >= N:
-                return np.nan
+                return None
             state = ret[0][idx]
             loss = self.eval(state, getmax=True)
-            return loss
+            return np.mean(loss.ravel())
         li = map(fun, xrange(0, N, N_BATCH))
-        return np.nanmean(li)
+        li2 = [x for x in li if x is not None]
+        return np.mean(li2)
 
 
 def ANN(state, layer='', reuse=None):
@@ -345,8 +346,10 @@ def CNN(state, layer='', reuse=None):
             model, [2, 2], 32, 1, layer='layer2', reuse=reuse, stddev=std))
         model = relu(full_layer(
             model, 64, layer='layer3', reuse=reuse, stddev=std))
-        model = tf.tanh(full_layer(
+        model = relu(full_layer(
             model, 4, layer='layer4', reuse=reuse, stddev=std))
+        model = tf.tanh(full_layer(
+            model, 4, layer='layer5', reuse=reuse, stddev=std))
     return model
 
 
@@ -463,7 +466,7 @@ def NFQ(**kwargs):
 
     li = []
     try:
-        n = 20000
+        n = 2000
         SARs = SARli(lim=n)
         for cnt, tick in gettick():
             t, state, act, r1, terminal = tick
@@ -483,7 +486,7 @@ def NFQ(**kwargs):
             if cnt % 100 == 0:
                 li.append(perf)
                 print perf
-            if cnt >= 50000:
+            if cnt >= 5000:
                 break
         np.savez(open('perf.npz', 'wb'), li)
 
