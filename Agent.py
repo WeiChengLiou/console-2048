@@ -19,8 +19,8 @@ SEED = 34654
 N_BATCH = 100
 N_REPSIZE = 500
 OPTIMIZER = tf.train.AdamOptimizer
-LEARNING_RATE = 1e-2
-TARGET_FREQ = 1000
+LEARNING_RATE = 1e-3
+TARGET_FREQ = 100
 
 
 def rndAction(state):
@@ -341,14 +341,14 @@ def CNN(state, layer='', reuse=None):
     std = 0.01
     with tf.variable_scope(layer, reuse=reuse):
         model = (conv_layer(
-            state, [2, 2], 16, 1, layer='layer1', reuse=reuse, stddev=std))
+            state, [3, 3], 64, 1, layer='layer1', reuse=reuse, stddev=std))
         model = (conv_layer(
             model, [2, 2], 32, 1, layer='layer2', reuse=reuse, stddev=std))
         model = relu(full_layer(
-            model, 64, layer='layer3', reuse=reuse, stddev=std))
+            model, 128, layer='layer3', reuse=reuse, stddev=std))
         model = relu(full_layer(
-            model, 4, layer='layer4', reuse=reuse, stddev=std))
-        model = tf.tanh(full_layer(
+            model, 64, layer='layer4', reuse=reuse, stddev=std))
+        model = relu(full_layer(
             model, 4, layer='layer5', reuse=reuse, stddev=std))
     return model
 
@@ -364,12 +364,6 @@ def getidx(mat, act):
 
 
 fgetidx = tf.make_template('getidx', getidx)
-
-
-def maxQ(Q):
-    Q_max = tf.reduce_max(Q, reduction_indices=[1])
-    size0 = getshape(Q_max)
-    return tf.reshape(Q_max, [size0[0], 1])
 
 
 class ExpReplay(object):
@@ -433,17 +427,20 @@ class TargetNetwork(object):
 
 
 def NFQ(**kwargs):
-    saveflag = False
+    saveflag = True
     agent = DNQ(**kwargs)
     # agent.load()
     agent.listparm()
 
-    if os.path.exists('perfdic.yaml'):
-        perfdic = yload()
-        idx = np.max(perfdic.keys()) + 1
-    else:
-        perfdic = {}
-        idx = 0
+    perfdic = {}
+    idx_p = 0
+    fi_perf = 'perfdic.yaml'
+    if os.path.exists(fi_perf):
+        perfdic = yload(fi_perf)
+        if perfdic:
+            idx_p = np.max(perfdic.keys()) + 1
+        else:
+            perfdic = {}
 
     def callupdate(tick):
         t, state, act, r1, terminal = tick
@@ -466,7 +463,7 @@ def NFQ(**kwargs):
 
     li = []
     try:
-        n = 2000
+        n = 20000
         SARs = SARli(lim=n)
         for cnt, tick in gettick():
             t, state, act, r1, terminal = tick
@@ -474,7 +471,7 @@ def NFQ(**kwargs):
             SARs.update(t-1, state, act, r1, terminal)
             if len(SARs) == n:
                 break
-        idx = sample(range(n), n/2)
+        idx = range(0, n, 2)
         ret = SARs[idx]
         agent.sa_sample = ret
 
@@ -486,13 +483,14 @@ def NFQ(**kwargs):
             if cnt % 100 == 0:
                 li.append(perf)
                 print perf
-            if cnt >= 5000:
+            if len(li) >= 300:
                 break
         np.savez(open('perf.npz', 'wb'), li)
+        perf = np.mean(li[-5:])
 
         if saveflag:
-            perfdic[idx] = float(perf)
-            agent.save(idx)
+            perfdic[idx_p] = float(perf)
+            agent.save(idx_p)
             ysave(perfdic, 'perfdic.yaml')
     except:
         print_exc()

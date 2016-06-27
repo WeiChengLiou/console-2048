@@ -52,7 +52,9 @@ def encReward(r):
 
 
 def ysave(obj, fi):
-    yaml.dump(obj, open(fi, 'wb'))
+    with open(fi, 'wb') as f:
+        for k, v in obj.iteritems():
+            f.write('%d: %f\n' % (k, v))
 
 
 def yload(fi):
